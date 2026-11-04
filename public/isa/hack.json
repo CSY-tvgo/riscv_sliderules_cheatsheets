@@ -1,0 +1,715 @@
+{
+  "name": "Hack",
+  "formats": {
+    "A": {
+      "title": "Address",
+      "width": 16,
+      "layout": [
+        [
+          "0",
+          15,
+          15,
+          "opcode"
+        ],
+        [
+          "value",
+          14,
+          0,
+          "imm"
+        ]
+      ]
+    },
+    "C": {
+      "title": "Compute",
+      "width": 16,
+      "layout": [
+        [
+          "111",
+          15,
+          13,
+          "opcode"
+        ],
+        [
+          "a",
+          12,
+          12,
+          "funct"
+        ],
+        [
+          "zx",
+          11,
+          11,
+          "funct"
+        ],
+        [
+          "nx",
+          10,
+          10,
+          "funct"
+        ],
+        [
+          "zy",
+          9,
+          9,
+          "funct"
+        ],
+        [
+          "ny",
+          8,
+          8,
+          "funct"
+        ],
+        [
+          "f",
+          7,
+          7,
+          "funct"
+        ],
+        [
+          "no",
+          6,
+          6,
+          "funct"
+        ],
+        [
+          "dest",
+          5,
+          3,
+          "reg"
+        ],
+        [
+          "jump",
+          2,
+          0,
+          "reg"
+        ]
+      ]
+    }
+  },
+  "groups": {
+    "address": {
+      "section": "address",
+      "format": "A",
+      "extension": "Address",
+      "title": "Load the A Register",
+      "pseudocode": "A = value ; PC += 1"
+    },
+    "alu": {
+      "section": "compute",
+      "format": "C",
+      "extension": "ALU",
+      "title": "Compute on D and A (a = 0)",
+      "pseudocode": "dest = comp ; if ( comp (jump) 0 ) PC = A"
+    },
+    "memory": {
+      "section": "compute",
+      "format": "C",
+      "extension": "Memory",
+      "title": "Compute on D and M = RAM[A] (a = 1)",
+      "pseudocode": "dest = comp ; if ( comp (jump) 0 ) PC = A"
+    }
+  },
+  "sections": {
+    "address": "A-Instructions — inst[15] = 0",
+    "compute": "C-Instructions — inst[15:13] = 111"
+  },
+  "operands": {
+    "dest": {
+      "width": 3,
+      "names": [
+        "null",
+        "M",
+        "D",
+        "MD",
+        "A",
+        "AM",
+        "AD",
+        "AMD"
+      ]
+    },
+    "jump": {
+      "width": 3,
+      "names": [
+        "null",
+        "JGT",
+        "JEQ",
+        "JGE",
+        "JLT",
+        "JNE",
+        "JLE",
+        "JMP"
+      ]
+    }
+  },
+  "instructions": [
+    {
+      "id": "@",
+      "name": "@",
+      "group": "address",
+      "extension": "Address",
+      "format": "A",
+      "description": "Load Address",
+      "pseudocode": "A = imm",
+      "enc": "0 imm[14:0]",
+      "asm": "imm",
+      "width": 16,
+      "mask": "0x8000",
+      "match": "0x0000"
+    },
+    {
+      "id": "0",
+      "name": "0",
+      "group": "alu",
+      "extension": "ALU",
+      "format": "C",
+      "description": "Zero",
+      "pseudocode": "comp = 0",
+      "enc": "111 0 101010 dest jump",
+      "asm": "dest, jump",
+      "width": 16,
+      "mask": "0xffc0",
+      "match": "0xea80"
+    },
+    {
+      "id": "1",
+      "name": "1",
+      "group": "alu",
+      "extension": "ALU",
+      "format": "C",
+      "description": "One",
+      "pseudocode": "comp = 1",
+      "enc": "111 0 111111 dest jump",
+      "asm": "dest, jump",
+      "width": 16,
+      "mask": "0xffc0",
+      "match": "0xefc0"
+    },
+    {
+      "id": "-1",
+      "name": "-1",
+      "group": "alu",
+      "extension": "ALU",
+      "format": "C",
+      "description": "Minus One",
+      "pseudocode": "comp = -1",
+      "enc": "111 0 111010 dest jump",
+      "asm": "dest, jump",
+      "width": 16,
+      "mask": "0xffc0",
+      "match": "0xee80"
+    },
+    {
+      "id": "D",
+      "name": "D",
+      "group": "alu",
+      "extension": "ALU",
+      "format": "C",
+      "description": "D",
+      "pseudocode": "comp = D",
+      "enc": "111 0 001100 dest jump",
+      "asm": "dest, jump",
+      "width": 16,
+      "mask": "0xffc0",
+      "match": "0xe300"
+    },
+    {
+      "id": "A",
+      "name": "A",
+      "group": "alu",
+      "extension": "ALU",
+      "format": "C",
+      "description": "A",
+      "pseudocode": "comp = A",
+      "enc": "111 0 110000 dest jump",
+      "asm": "dest, jump",
+      "width": 16,
+      "mask": "0xffc0",
+      "match": "0xec00"
+    },
+    {
+      "id": "!D",
+      "name": "!D",
+      "group": "alu",
+      "extension": "ALU",
+      "format": "C",
+      "description": "Not D",
+      "pseudocode": "comp = !D",
+      "enc": "111 0 001101 dest jump",
+      "asm": "dest, jump",
+      "width": 16,
+      "mask": "0xffc0",
+      "match": "0xe340"
+    },
+    {
+      "id": "!A",
+      "name": "!A",
+      "group": "alu",
+      "extension": "ALU",
+      "format": "C",
+      "description": "Not A",
+      "pseudocode": "comp = !A",
+      "enc": "111 0 110001 dest jump",
+      "asm": "dest, jump",
+      "width": 16,
+      "mask": "0xffc0",
+      "match": "0xec40"
+    },
+    {
+      "id": "-D",
+      "name": "-D",
+      "group": "alu",
+      "extension": "ALU",
+      "format": "C",
+      "description": "Negate D",
+      "pseudocode": "comp = -D",
+      "enc": "111 0 001111 dest jump",
+      "asm": "dest, jump",
+      "width": 16,
+      "mask": "0xffc0",
+      "match": "0xe3c0"
+    },
+    {
+      "id": "-A",
+      "name": "-A",
+      "group": "alu",
+      "extension": "ALU",
+      "format": "C",
+      "description": "Negate A",
+      "pseudocode": "comp = -A",
+      "enc": "111 0 110011 dest jump",
+      "asm": "dest, jump",
+      "width": 16,
+      "mask": "0xffc0",
+      "match": "0xecc0"
+    },
+    {
+      "id": "D+1",
+      "name": "D+1",
+      "group": "alu",
+      "extension": "ALU",
+      "format": "C",
+      "description": "Increment D",
+      "pseudocode": "comp = D+1",
+      "enc": "111 0 011111 dest jump",
+      "asm": "dest, jump",
+      "width": 16,
+      "mask": "0xffc0",
+      "match": "0xe7c0"
+    },
+    {
+      "id": "A+1",
+      "name": "A+1",
+      "group": "alu",
+      "extension": "ALU",
+      "format": "C",
+      "description": "Increment A",
+      "pseudocode": "comp = A+1",
+      "enc": "111 0 110111 dest jump",
+      "asm": "dest, jump",
+      "width": 16,
+      "mask": "0xffc0",
+      "match": "0xedc0"
+    },
+    {
+      "id": "D-1",
+      "name": "D-1",
+      "group": "alu",
+      "extension": "ALU",
+      "format": "C",
+      "description": "Decrement D",
+      "pseudocode": "comp = D-1",
+      "enc": "111 0 001110 dest jump",
+      "asm": "dest, jump",
+      "width": 16,
+      "mask": "0xffc0",
+      "match": "0xe380"
+    },
+    {
+      "id": "A-1",
+      "name": "A-1",
+      "group": "alu",
+      "extension": "ALU",
+      "format": "C",
+      "description": "Decrement A",
+      "pseudocode": "comp = A-1",
+      "enc": "111 0 110010 dest jump",
+      "asm": "dest, jump",
+      "width": 16,
+      "mask": "0xffc0",
+      "match": "0xec80"
+    },
+    {
+      "id": "D+A",
+      "name": "D+A",
+      "group": "alu",
+      "extension": "ALU",
+      "format": "C",
+      "description": "Add",
+      "pseudocode": "comp = D+A",
+      "enc": "111 0 000010 dest jump",
+      "asm": "dest, jump",
+      "width": 16,
+      "mask": "0xffc0",
+      "match": "0xe080"
+    },
+    {
+      "id": "D-A",
+      "name": "D-A",
+      "group": "alu",
+      "extension": "ALU",
+      "format": "C",
+      "description": "Subtract A from D",
+      "pseudocode": "comp = D-A",
+      "enc": "111 0 010011 dest jump",
+      "asm": "dest, jump",
+      "width": 16,
+      "mask": "0xffc0",
+      "match": "0xe4c0"
+    },
+    {
+      "id": "A-D",
+      "name": "A-D",
+      "group": "alu",
+      "extension": "ALU",
+      "format": "C",
+      "description": "Subtract D from A",
+      "pseudocode": "comp = A-D",
+      "enc": "111 0 000111 dest jump",
+      "asm": "dest, jump",
+      "width": 16,
+      "mask": "0xffc0",
+      "match": "0xe1c0"
+    },
+    {
+      "id": "D&A",
+      "name": "D&A",
+      "group": "alu",
+      "extension": "ALU",
+      "format": "C",
+      "description": "Bitwise And",
+      "pseudocode": "comp = D&A",
+      "enc": "111 0 000000 dest jump",
+      "asm": "dest, jump",
+      "width": 16,
+      "mask": "0xffc0",
+      "match": "0xe000"
+    },
+    {
+      "id": "D|A",
+      "name": "D|A",
+      "group": "alu",
+      "extension": "ALU",
+      "format": "C",
+      "description": "Bitwise Or",
+      "pseudocode": "comp = D|A",
+      "enc": "111 0 010101 dest jump",
+      "asm": "dest, jump",
+      "width": 16,
+      "mask": "0xffc0",
+      "match": "0xe540"
+    },
+    {
+      "id": "M",
+      "name": "M",
+      "group": "memory",
+      "extension": "Memory",
+      "format": "C",
+      "description": "M",
+      "pseudocode": "comp = M",
+      "enc": "111 1 110000 dest jump",
+      "asm": "dest, jump",
+      "width": 16,
+      "mask": "0xffc0",
+      "match": "0xfc00"
+    },
+    {
+      "id": "!M",
+      "name": "!M",
+      "group": "memory",
+      "extension": "Memory",
+      "format": "C",
+      "description": "Not M",
+      "pseudocode": "comp = !M",
+      "enc": "111 1 110001 dest jump",
+      "asm": "dest, jump",
+      "width": 16,
+      "mask": "0xffc0",
+      "match": "0xfc40"
+    },
+    {
+      "id": "-M",
+      "name": "-M",
+      "group": "memory",
+      "extension": "Memory",
+      "format": "C",
+      "description": "Negate M",
+      "pseudocode": "comp = -M",
+      "enc": "111 1 110011 dest jump",
+      "asm": "dest, jump",
+      "width": 16,
+      "mask": "0xffc0",
+      "match": "0xfcc0"
+    },
+    {
+      "id": "M+1",
+      "name": "M+1",
+      "group": "memory",
+      "extension": "Memory",
+      "format": "C",
+      "description": "Increment M",
+      "pseudocode": "comp = M+1",
+      "enc": "111 1 110111 dest jump",
+      "asm": "dest, jump",
+      "width": 16,
+      "mask": "0xffc0",
+      "match": "0xfdc0"
+    },
+    {
+      "id": "M-1",
+      "name": "M-1",
+      "group": "memory",
+      "extension": "Memory",
+      "format": "C",
+      "description": "Decrement M",
+      "pseudocode": "comp = M-1",
+      "enc": "111 1 110010 dest jump",
+      "asm": "dest, jump",
+      "width": 16,
+      "mask": "0xffc0",
+      "match": "0xfc80"
+    },
+    {
+      "id": "D+M",
+      "name": "D+M",
+      "group": "memory",
+      "extension": "Memory",
+      "format": "C",
+      "description": "Add",
+      "pseudocode": "comp = D+M",
+      "enc": "111 1 000010 dest jump",
+      "asm": "dest, jump",
+      "width": 16,
+      "mask": "0xffc0",
+      "match": "0xf080"
+    },
+    {
+      "id": "D-M",
+      "name": "D-M",
+      "group": "memory",
+      "extension": "Memory",
+      "format": "C",
+      "description": "Subtract M from D",
+      "pseudocode": "comp = D-M",
+      "enc": "111 1 010011 dest jump",
+      "asm": "dest, jump",
+      "width": 16,
+      "mask": "0xffc0",
+      "match": "0xf4c0"
+    },
+    {
+      "id": "M-D",
+      "name": "M-D",
+      "group": "memory",
+      "extension": "Memory",
+      "format": "C",
+      "description": "Subtract D from M",
+      "pseudocode": "comp = M-D",
+      "enc": "111 1 000111 dest jump",
+      "asm": "dest, jump",
+      "width": 16,
+      "mask": "0xffc0",
+      "match": "0xf1c0"
+    },
+    {
+      "id": "D&M",
+      "name": "D&M",
+      "group": "memory",
+      "extension": "Memory",
+      "format": "C",
+      "description": "Bitwise And",
+      "pseudocode": "comp = D&M",
+      "enc": "111 1 000000 dest jump",
+      "asm": "dest, jump",
+      "width": 16,
+      "mask": "0xffc0",
+      "match": "0xf000"
+    },
+    {
+      "id": "D|M",
+      "name": "D|M",
+      "group": "memory",
+      "extension": "Memory",
+      "format": "C",
+      "description": "Bitwise Or",
+      "pseudocode": "comp = D|M",
+      "enc": "111 1 010101 dest jump",
+      "asm": "dest, jump",
+      "width": 16,
+      "mask": "0xffc0",
+      "match": "0xf540"
+    }
+  ],
+  "pseudoInstructions": [
+    {
+      "name": "@SP",
+      "description": "Stack Pointer",
+      "expands": [
+        "@0"
+      ]
+    },
+    {
+      "name": "@LCL",
+      "description": "Local Segment Pointer",
+      "expands": [
+        "@1"
+      ]
+    },
+    {
+      "name": "@ARG",
+      "description": "Argument Segment Pointer",
+      "expands": [
+        "@2"
+      ]
+    },
+    {
+      "name": "@THIS",
+      "description": "This Segment Pointer",
+      "expands": [
+        "@3"
+      ]
+    },
+    {
+      "name": "@THAT",
+      "description": "That Segment Pointer",
+      "expands": [
+        "@4"
+      ]
+    },
+    {
+      "name": "@R0",
+      "description": "Virtual Register 0",
+      "expands": [
+        "@0"
+      ]
+    },
+    {
+      "name": "@R1",
+      "description": "Virtual Register 1",
+      "expands": [
+        "@1"
+      ]
+    },
+    {
+      "name": "@R2",
+      "description": "Virtual Register 2",
+      "expands": [
+        "@2"
+      ]
+    },
+    {
+      "name": "@R3",
+      "description": "Virtual Register 3",
+      "expands": [
+        "@3"
+      ]
+    },
+    {
+      "name": "@R4",
+      "description": "Virtual Register 4",
+      "expands": [
+        "@4"
+      ]
+    },
+    {
+      "name": "@R5",
+      "description": "Virtual Register 5",
+      "expands": [
+        "@5"
+      ]
+    },
+    {
+      "name": "@R6",
+      "description": "Virtual Register 6",
+      "expands": [
+        "@6"
+      ]
+    },
+    {
+      "name": "@R7",
+      "description": "Virtual Register 7",
+      "expands": [
+        "@7"
+      ]
+    },
+    {
+      "name": "@R8",
+      "description": "Virtual Register 8",
+      "expands": [
+        "@8"
+      ]
+    },
+    {
+      "name": "@R9",
+      "description": "Virtual Register 9",
+      "expands": [
+        "@9"
+      ]
+    },
+    {
+      "name": "@R10",
+      "description": "Virtual Register 10",
+      "expands": [
+        "@10"
+      ]
+    },
+    {
+      "name": "@R11",
+      "description": "Virtual Register 11",
+      "expands": [
+        "@11"
+      ]
+    },
+    {
+      "name": "@R12",
+      "description": "Virtual Register 12",
+      "expands": [
+        "@12"
+      ]
+    },
+    {
+      "name": "@R13",
+      "description": "Virtual Register 13",
+      "expands": [
+        "@13"
+      ]
+    },
+    {
+      "name": "@R14",
+      "description": "Virtual Register 14",
+      "expands": [
+        "@14"
+      ]
+    },
+    {
+      "name": "@R15",
+      "description": "Virtual Register 15",
+      "expands": [
+        "@15"
+      ]
+    },
+    {
+      "name": "@SCREEN",
+      "description": "Screen Memory Map",
+      "expands": [
+        "@16384"
+      ]
+    },
+    {
+      "name": "@KBD",
+      "description": "Keyboard Memory Map",
+      "expands": [
+        "@24576"
+      ]
+    }
+  ]
+}

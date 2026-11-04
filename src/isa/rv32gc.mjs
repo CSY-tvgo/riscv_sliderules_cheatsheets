@@ -381,3 +381,48 @@ export const pseudoInstructions = [
   { name: 'fabs.d', asm: 'rd, rs', expands: [['fsgnjx.d', { rs1: 'rs', rs2: 'rs' }]], description: 'Double Absolute Value' },
   { name: 'fneg.d', asm: 'rd, rs', expands: [['fsgnjn.d', { rs1: 'rs', rs2: 'rs' }]], description: 'Double Negate' },
 ];
+
+// ---------------------------------------------------------------- what the codec and the sheets need (see createCodec)
+
+export const name = 'RV32GC';
+export const spine = { width: 32, title: 'inst[31:0]' };
+export const extensions = ['I', 'M', 'A', 'F', 'D', 'Zicsr', 'Zifencei', 'C', 'C + F', 'C + D', 'PSEUDO'];
+export const immediates = { imm: true, uimm: false, nzimm: true, nzuimm: false, offset: true, shamt: false, zimm: false };
+export const alwaysImmediateRow = true;
+export const operandPattern = /(?:rd|rs1|rs2|rs3|rs|rt)'?|imm|csr|rm|pred|succ|sp/g;
+
+// Bit order used to sort the decoder: lsb first, then opcode, funct3, funct7 / compressed funct3, ...
+export const decodeOrder = {
+  32: [0, 1, 2, 3, 4, 5, 6, 12, 13, 14, 25, 26, 27, 28, 29, 30, 31, 20, 21, 22, 23, 24, 15, 16, 17, 18, 19, 7, 8, 9, 10, 11],
+  16: [0, 1, 13, 14, 15, 12, 10, 11, 5, 6, 2, 3, 4, 7, 8, 9],
+};
+
+// inst[1:0] tell the width of an instruction.
+export function widthOf({ bit = () => '-' }) {
+  if (bit(0) === '-' || bit(1) === '-') return null;
+  return bit(0) === '1' && bit(1) === '1' ? 32 : 16;
+}
+
+// RV32I HINTs (spec table "RV32I HINT instructions"): computational instructions writing x0, and fences with an empty set.
+const _STANDARD_HINTS = ['lui', 'auipc', 'addi', 'andi', 'ori', 'xori', 'add', 'sub', 'and', 'or', 'xor', 'sll', 'srl', 'sra'];
+const _CUSTOM_HINTS = ['slti', 'sltiu', 'slli', 'srli', 'srai', 'slt', 'sltu'];
+const _NTL_HINTS = { 2: 'ntl.p1', 3: 'ntl.pall', 4: 'ntl.s1', 5: 'ntl.all' };
+
+function _baseHint({ inst = {}, fields = {}, word = 0 }) {
+  if (inst.name === 'fence') return fields.pred === 0 || fields.succ === 0 ? 'HINT (empty predecessor or successor set): standard use, executes as a no-op' : '';
+  if (fields.rd !== 0 || word === 0x13) return '';
+  if (inst.name === 'add' && fields.rs1 === 0 && _NTL_HINTS[fields.rs2]) return `HINT: ${_NTL_HINTS[fields.rs2]} (Zihintntl non-temporal locality)`;
+  if (inst.name === 'slli' && fields.rs1 === 0 && fields.imm === 31) return 'HINT: semihosting entry marker';
+  if (inst.name === 'srai' && fields.rs1 === 0 && fields.imm === 7) return 'HINT: semihosting exit marker';
+  if (_STANDARD_HINTS.includes(inst.name)) return 'HINT (rd = x0): standard use, executes as a no-op';
+  if (_CUSTOM_HINTS.includes(inst.name)) return 'HINT (rd = x0): custom use, executes as a no-op';
+  return '';
+}
+
+function _reservedRounding({ fields = {} }) {
+  return fields.rm === 5 || fields.rm === 6 ? `rm = ${fields.rm.toString(2)} is reserved: illegal instruction` : '';
+}
+
+export function note({ inst = {}, fields = {}, word = 0 }) {
+  return [_baseHint({ inst, fields, word }), _reservedRounding({ fields })].filter(Boolean).join(' ; ');
+}

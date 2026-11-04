@@ -48,7 +48,8 @@
 /* In place of the sheets of an instruction set that has none yet; as wide as the header and in view with it. */
 .sheet-placeholder { position: sticky; left: 16px; box-sizing: border-box; border: 1px solid var(--grid); text-align: center; }
 .placeholder-title { padding: 4px; background: var(--section); color: #fff; font-size: 12px; font-weight: bold; }
-.placeholder-bits { padding: 48px 8px; color: #888; font: 16px ui-monospace, Menlo, Consolas, monospace; }
+.placeholder-bits { padding: 48px 8px 8px; color: #888; font: 16px ui-monospace, Menlo, Consolas, monospace; }
+.placeholder-link { padding: 0 8px 48px; font-size: 12px; }
 
 /* ---------- sliderule table ---------- */
 
@@ -75,6 +76,8 @@ table.sliderule {
 .header-main { display: flex; align-items: center; gap: 14px; }
 .header-title { display: inline-flex; align-items: center; gap: 8px; font-size: 22px; font-weight: bold; letter-spacing: 1px; white-space: nowrap; }
 .header-tools { display: flex; gap: 4px; margin-left: auto; }
+/* Next to the title; keeps its place when a placeholder has none, so the pill stays where it is. */
+.header-version { min-width: 32px; color: #777; font-size: 12px; font-weight: normal; letter-spacing: 0; }
 .tool-button.header-tool { padding: 6px 12px; font-size: 12px; font-weight: bold; }
 .header-sub { display: flex; align-items: center; gap: 12px; margin-top: 3px; font-size: 10px; color: #555; }
 .header-credits { display: flex; flex-wrap: wrap; align-items: center; gap: 0 4px; }
@@ -142,6 +145,9 @@ table.sliderule {
 .sliderule .bit-number {
   font-weight: normal;
 }
+
+/* Where a new byte starts, in the instruction sets whose bits are numbered per byte. */
+.sliderule .bit-number.byte-start { border-left: 2px solid #fff; }
 
 .sliderule .bit-head {
   padding: 1px;
@@ -400,6 +406,16 @@ table.sliderule {
 .fmt-U            { --strong: #8e7cc3; --light: #d9d2e9; }
 .fmt-J, .fmt-CJ   { --strong: #f6b26b; --light: #fce5cd; }
 .fmt-CL           { --strong: #c27ba0; --light: #ead1dc; }
+/* The other instruction sets take the hue of what their formats mirror: operands in registers red, immediates green,
+   short addresses yellow, long ones blue, pointers purple, relative jumps orange (see CLAUDE.md). */
+.fmt-C, .fmt-IMP, .fmt-ACC, .fmt-REG { --strong: #e06666; --light: #f4cccc; }
+.fmt-A, .fmt-IMM  { --strong: #93c47d; --light: #d9ead3; }
+.fmt-ZP, .fmt-ZPX, .fmt-ZPY { --strong: #ffd966; --light: #fff2cc; }
+.fmt-ABS, .fmt-ABX, .fmt-ABY, .fmt-EXT { --strong: #6d9eeb; --light: #c9daf8; }
+.fmt-IND          { --strong: #8e7cc3; --light: #d9d2e9; }
+.fmt-IZX, .fmt-IZY, .fmt-IDX { --strong: #c27ba0; --light: #ead1dc; }
+.fmt-REL          { --strong: #f6b26b; --light: #fce5cd; }
+.fmt-BIT          { --strong: #c9a46b; --light: #f1e4cf; }
 
 .section-row td {
   background: var(--section);
@@ -410,6 +426,8 @@ table.sliderule {
 }
 
 .bit.unused { background: var(--unused); }
+/* The bytes a byte instruction does not have. */
+.bit.absent { background: var(--muted); }
 .bit.field-reg, .bit.field-field { background: var(--register); }
 .bit.field-funct, .bit.lit-funct, .bit.lit-imm, .bit.lit-reg { background: var(--strong); font-weight: bold; }
 .bit.field-opcode, .bit.lit-opcode { background: var(--register); }

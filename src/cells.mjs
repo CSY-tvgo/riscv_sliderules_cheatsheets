@@ -1,5 +1,4 @@
-import { formats } from './isa/rv32gc.mjs';
-import { immediateView, registerName, fenceText, ROUNDING, CSRS } from './isa/codec.mjs';
+import { registerName, fenceText, ROUNDING, CSRS } from './isa/codec.mjs';
 
 // Table cells shared by the encoder and decoder sliderules.
 
@@ -11,16 +10,15 @@ export function cell({ width = 1, rowspan = 1, classes = '', text = '', title = 
   return _td(attributes, text);
 }
 
-// Bits 31..16 of a compressed instruction belong to the next instruction: black, as on paper.
-export function unusedUpperHalf({ width = 32 }) {
-  return width === 16 ? [cell({ width: 16, classes: 'bit unused' })] : [];
+// The spine positions an instruction does not reach. Bits 31..16 of a compressed instruction belong to the next
+// instruction: black, as on paper. The bytes after a shorter byte instruction are just not there, on the right.
+export function outsideCells({ codec = null, width = 32 }) {
+  const { spine } = codec.spec;
+  return width < spine.width ? [cell({ width: spine.width - width, classes: spine.bytes ? 'bit absent' : 'bit unused' })] : [];
 }
 
-function _range({ segment = {} }) {
-  return `inst[${segment.hi}${segment.width > 1 ? ':' + segment.lo : ''}]`;
-}
-
-function _fieldText({ key = 'rm', value = 0 }) {
+function _fieldText({ codec = null, key = 'rm', value = 0 }) {
+  if (codec.spec.operands && codec.spec.operands[key]) return codec.operandText({ key, value });
   if (key === 'pred' || key === 'succ') return fenceText({ value });
   if (key === 'rm') return `rm = ${ROUNDING[value] || value}`;
   if (key === 'csr') return `csr = ${Object.keys(CSRS).find((name) => CSRS[name] === value) || `0x${value.toString(16)}`}`;
@@ -47,8 +45,9 @@ function _withBits({ td = null, hi = 0, lo = 0, bitAt = null }) {
 // One cell per encoding segment; literal bits get one cell each. With decoded fields, registers show their names;
 // with bitAt (bit → '0' / '1' / null), the known bits show faintly behind the placeholders (best effort: as many as
 // are known), so the instruction's structure always stays visible.
-export function segmentCells({ segments = [], width = 32, fields = null, inst = {}, bitAt = null }) {
-  const cells = unusedUpperHalf({ width });
+export function segmentCells({ codec = null, segments = [], width = 32, fields = null, inst = {}, bitAt = null }) {
+  const outside = outsideCells({ codec, width });
+  const cells = codec.spec.spine.bytes ? [] : outside;
   for (const s of segments) {
     if (s.kind === 'lit') {
       for (const bit of s.bits) cells.push(cell({ classes: `bit lit-${s.role}`, text: bit }));
@@ -56,24 +55,24 @@ export function segmentCells({ segments = [], width = 32, fields = null, inst = 
     }
     let td;
     if (s.kind === 'any') {
-      td = cell({ width: s.width, classes: 'bit any', text: s.width > 1 ? '– any –' : '–', title: `${_range({ segment: s })} = don't care` });
+      td = cell({ width: s.width, classes: 'bit any', text: s.width > 1 ? '– any –' : '–', title: `${codec.bitName(s)} = don't care` });
     } else if (s.kind === 'imm') {
       td = cell({ width: s.width, classes: `bit imm imm-${s.part % 4}`, text: s.width > 1 ? `${s.name}[${s.label}]` : s.label,
-        title: `${_range({ segment: s })} = ${s.name}[${s.immBits.join('|')}]` });
+        title: `${codec.bitName(s)} = ${s.name}[${s.immBits.join('|')}]` });
     } else if (fields && s.kind === 'reg') {
       const value = registerName({ number: fields[s.key], fp: (inst.fregs || []).includes(s.key) });
       td = cell({ width: s.width, classes: 'bit field-reg', text: s.width > 3 ? `${s.key} = ${value}` : value });
     } else if (fields && s.kind === 'field') {
-      td = cell({ width: s.width, classes: 'bit field-field', text: _fieldText({ key: s.key, value: fields[s.key] }) });
+      td = cell({ width: s.width, classes: `bit field-${s.numeric ? 'imm' : 'field'}`, text: _fieldText({ codec, key: s.key, value: fields[s.key] }) });
     } else {
-      td = cell({ width: s.width, classes: `bit field-${s.kind}`, text: s.label });
+      td = cell({ width: s.width, classes: `bit field-${s.numeric ? 'imm' : s.kind}`, text: s.label });
     }
     cells.push(_withBits({ td, hi: s.hi, lo: s.lo, bitAt }));
   }
-  return cells;
+  return codec.spec.spine.bytes ? [...cells, ...outside] : cells;
 }
 
-// The immediate's bits (31..0) from the instruction's bits: wordBitAt(inst bit) → '0' / '1' / null. Sign extension
+// The immediate's bits (from the top of the spine) from the instruction's bits: wordBitAt(inst bit) → '0' / '1' / null. Sign extension
 // repeats the top bit, unused low bits and zero extension are 0.
 export function immediateBits({ inst = {}, wordBitAt = () => null }) {
   const source = {};
@@ -103,26 +102,29 @@ export function flashChangedBits({ table = null, id = null }) {
 
 // Immediate view: how the scattered immediate bits are reassembled, same colours as their source; with bitAt
 // (immediate bit → '0' / '1' / null, see immediateBits) its known bits show faintly behind.
-export function immediateCells({ inst = {}, bitAt = null }) {
-  return immediateView({ inst }).map((c) => {
+export function immediateCells({ codec = null, inst = {}, bitAt = null }) {
+  return codec.immediateView({ inst }).map((c) => {
     const td = c.kind === 'zero'
       ? cell({ width: c.width, classes: 'bit imm-zero', text: c.width > 1 ? '– 0 –' : '0' })
       : cell({ width: c.width, classes: `bit imm imm-${c.segment.part % 4}${c.kind === 'sext' ? ' sext' : ''}`,
         text: c.kind === 'sext' ? `– ${c.segment.immBits[0]} –` : c.segment.label,
-        title: c.kind === 'sext' ? `sign extension of inst[${c.segment.hi}]` : `from ${_range({ segment: c.segment })}` });
+        title: c.kind === 'sext' ? `sign extension of ${codec.bitName({ hi: c.segment.hi })}` : `from ${codec.bitName(c.segment)}` });
     return c.kind === 'zero' && c.width === 1 ? td : _withBits({ td, hi: c.hi, lo: c.hi - c.width + 1, bitAt });
   });
 }
 
-export function typeCell({ format = 'R', rowspan = 1 }) {
+export function typeCell({ codec = null, format = 'R', rowspan = 1 }) {
+  const { formats } = codec.spec;
   if (!formats[format]) return cell({ rowspan, classes: 'text type', text: format });
-  return _td({ class: 'text type', rowspan: String(rowspan) }, [_b({}, `${format} - Type`), _br(), `"${formats[format].title}"`]);
+  return _td({ class: 'text type', rowspan: String(rowspan) }, [_b({}, codec.typeName({ format }).replace('-', ' - ')), _br(), `"${formats[format].title}"`]);
 }
 
 // Bit numbers and the bit switches form the "spine": the only part that stays visible while switching tables.
-export function bitNumbers() {
+export function bitNumbers({ codec = null }) {
   const numbers = [];
-  for (let bit = 31; bit >= 0; bit--) numbers.push(_th({ class: 'bit-number spine' }, String(bit)));
+  for (let position = codec.spec.spine.width - 1; position >= 0; position--) {
+    numbers.push(_th({ class: 'bit-number spine' + (codec.byteStart({ position }) ? ' byte-start' : '') }, codec.bitNumber({ position })));
+  }
   return numbers;
 }
 
@@ -160,20 +162,24 @@ function _credits() {
   ]);
 }
 
+export function contributeLink() {
+  return _a({ class: 'contribute-link no-print', href: `${REPO}#contributing`, target: '_blank', rel: 'noopener' }, 'Contribute or report an issue ↗');
+}
+
 // The header above both sheets (it does not move when switching): the title, with the instruction set selector inside
-// it, and the Encoder / Decoder pill on the left, the tools (PDF, Clear, Share) on the right; credits, the license and
+// it and its version after it, and the Encoder / Decoder pill on the left, the tools (PDF, Clear, Share) on the right; credits, the license and
 // the contribution link below. Tools and the contribution link are left out of the PDF (no-print).
-export function sheetHeader({ isaPicker = null, switcher = null, tools = [] }) {
+export function sheetHeader({ isaPicker = null, version = null, switcher = null, tools = [] }) {
   return _div({ class: 'sheet-header' }, [
     _div({ class: 'header-main' }, [
-      _span({ class: 'header-title' }, ['Sliderule', isaPicker, 'Cheatsheet']),
+      _span({ class: 'header-title' }, ['Sliderule', isaPicker, 'Cheatsheet', version]),
       switcher,
       _div({ class: 'header-tools no-print' }, tools),
     ]),
     _div({ class: 'header-sub' }, [
       _credits(),
       _a({ class: 'license-note', href: 'https://creativecommons.org/licenses/by-sa/4.0/', target: '_blank', rel: 'noopener' }, 'Licensed under CC BY-SA 4.0'),
-      _a({ class: 'contribute-link no-print', href: `${REPO}#contributing`, target: '_blank', rel: 'noopener' }, 'Contribute or report an issue ↗'),
+      contributeLink(),
     ]),
   ]);
 }
@@ -196,6 +202,3 @@ export function tableWidth({ widths = [] }) {
   return `width: ${widths.reduce((sum, w) => sum + w, 0)}px`;
 }
 
-export function hex({ word = 0, width = 32 }) {
-  return `0x${(word >>> 0).toString(16).padStart(width / 4, '0')}`;
-}

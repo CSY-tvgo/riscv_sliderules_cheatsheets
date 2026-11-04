@@ -1,4 +1,4 @@
-// One switch per instruction bit (31..0) with three states: '-' (x, don't care), '0' or '1'.
+// One switch per bit of the spine with three states: '-' (x, don't care), '0' or '1'.
 // The 1 half sits on top and the 0 half below, so a row of set bits reads like a waveform.
 // Click a half to set it, click it again to go back to x. Keyboard: 0 / 1 set and move right,
 // x / Delete clear, Backspace clears the bit just typed, arrows / Home / End move: typing a run of 0s and 1s
@@ -9,29 +9,18 @@ import { Carousel } from './carousel.mjs';
 const HEX_OPTIONS = [{ value: 'x', label: 'x', hint: "don't care" },
   ...[...'0123456789abcdef'].map((digit) => ({ value: digit, label: digit, hint: parseInt(digit, 16).toString(2).padStart(4, '0') }))];
 
-// Pasted text as switch states (index 0 = bit 31): a hex word (0x..., 16 bit words leave the upper half x)
-// or a bit pattern (0b optional, x or - for don't care, lsb last). null if it is neither.
-export function parseBits({ text = '' }) {
-  const t = text.trim().toLowerCase().replace(/[_\s]/g, '');
-  if (/^0x[0-9a-f]{1,8}$/.test(t)) {
-    const word = parseInt(t.slice(2), 16) >>> 0;
-    const width = (word & 3) === 3 ? 32 : 16;
-    return Array.from({ length: 32 }, (_, i) => (31 - i < width ? String((word >>> (31 - i)) & 1) : '-'));
-  }
-  if (/^(0b)?[01x-]{1,32}$/.test(t)) return [...t.replace(/^0b/, '').replace(/x/g, '-').padStart(32, '-')];
-  return null;
-}
-
-export function Tristates({ editable = true, onChange = () => {} }) {
+export function Tristates({ codec = null, editable = true, onChange = () => {} }) {
+  const WIDTH = codec.spec.spine.width;
   const switches = [];
   const cells = [];
-  for (let bit = 31; bit >= 0; bit--) {
-    const one = _button({ class: 'tri-half tri-1', type: 'button', tabindex: '-1', 'aria-label': `inst[${bit}] = 1` }, '1');
-    const zero = _button({ class: 'tri-half tri-0', type: 'button', tabindex: '-1', 'aria-label': `inst[${bit}] = 0` }, '0');
-    const attributes = { class: 'tri', 'data-state': '-', role: 'group', 'aria-label': `inst[${bit}]` };
+  for (let bit = WIDTH - 1; bit >= 0; bit--) {
+    const name = codec.bitName({ hi: bit });
+    const one = _button({ class: 'tri-half tri-1', type: 'button', tabindex: '-1', 'aria-label': `${name} = 1` }, '1');
+    const zero = _button({ class: 'tri-half tri-0', type: 'button', tabindex: '-1', 'aria-label': `${name} = 0` }, '0');
+    const attributes = { class: 'tri', 'data-state': '-', role: 'group', 'aria-label': name };
     if (editable) {
-      attributes.tabindex = bit === 31 ? '0' : '-1';
-      attributes.title = `inst[${bit}]: click 1 or 0, click again for x`;
+      attributes.tabindex = bit === WIDTH - 1 ? '0' : '-1';
+      attributes.title = `${name}: click 1 or 0, click again for x`;
     } else {
       one.disabled = true;
       zero.disabled = true;
@@ -47,12 +36,12 @@ export function Tristates({ editable = true, onChange = () => {} }) {
     cells.push(_th({ class: 'bit-head spine' }, [sw]));
   }
 
-  // nibble 0 = bits 31..28
+  // nibble 0 = the four leftmost bits
   const nibbles = [];
   const hexCells = [];
-  for (let n = 0; n < 8; n++) {
-    const hi = 31 - 4 * n;
-    const carousel = Carousel({ options: HEX_OPTIONS, value: 'x', label: `inst[${hi}:${hi - 3}] in hex`, readOnly: !editable, classes: 'hex-carousel',
+  for (let n = 0; n < WIDTH / 4; n++) {
+    const hi = WIDTH - 1 - 4 * n;
+    const carousel = Carousel({ options: HEX_OPTIONS, value: 'x', label: `${codec.bitName({ hi, lo: hi - 3 })} in hex`, readOnly: !editable, classes: 'hex-carousel',
       onChange: (digit) => {
         const bits = digit === 'x' ? '----' : parseInt(digit, 16).toString(2).padStart(4, '0');
         [...bits].forEach((state, k) => { switches[4 * n + k].dataset.state = state; });
@@ -86,7 +75,7 @@ export function Tristates({ editable = true, onChange = () => {} }) {
 
   // Roving tabindex: the row is a single tab stop.
   function _focus({ index = 0 }) {
-    const i = Math.max(0, Math.min(31, index));
+    const i = Math.max(0, Math.min(WIDTH - 1, index));
     switches.forEach((sw, k) => sw.setAttribute('tabindex', k === i ? '0' : '-1'));
     switches[i].focus();
   }
@@ -102,7 +91,7 @@ export function Tristates({ editable = true, onChange = () => {} }) {
     const keys = {
       0: () => set('0', 1), 1: () => set('1', 1), x: () => set('-', 0), X: () => set('-', 0), Delete: () => set('-', 0),
       Backspace: back, ArrowLeft: () => _focus({ index: index - 1 }), ArrowRight: () => _focus({ index: index + 1 }),
-      Home: () => _focus({ index: 0 }), End: () => _focus({ index: 31 }),
+      Home: () => _focus({ index: 0 }), End: () => _focus({ index: WIDTH - 1 }),
     };
     if (!keys[event.key] || event.ctrlKey || event.metaKey || event.altKey) return;
     event.preventDefault();
@@ -110,7 +99,7 @@ export function Tristates({ editable = true, onChange = () => {} }) {
   }
 
   function _onPaste(event) {
-    const states = parseBits({ text: (event.clipboardData || window.clipboardData).getData('text') });
+    const states = codec.pasteStates({ text: (event.clipboardData || window.clipboardData).getData('text') });
     if (!states) return;
     event.preventDefault();
     _apply({ states });
@@ -124,28 +113,29 @@ export function Tristates({ editable = true, onChange = () => {} }) {
   return {
     cells,
     hexCells,
-    // index 0 = bit 31
+    // index 0 = the leftmost
     read: () => switches.map((sw) => sw.dataset.state),
-    // Bits outside the mask (and above a 16 bit width) become x; with off, the upper half of a 16 bit word is greyed out.
-    write: ({ value = 0, mask = 0xffffffff, width = 32, off = false }) => {
+    // Bits outside the mask (and outside an instruction width bits wide from lsb) become x; with off, those are greyed out.
+    write: ({ value = 0, mask = 0xffffffff, width = WIDTH, lsb = 0, off = false }) => {
       switches.forEach((sw, i) => {
-        const bit = 31 - i;
-        sw.dataset.state = bit < width && (mask >>> bit) & 1 ? String((value >>> bit) & 1) : '-';
-        sw.classList.toggle('tri-off', off && bit >= width);
+        const bit = WIDTH - 1 - i;
+        const inside = bit >= lsb && bit < lsb + width;
+        sw.dataset.state = inside && (mask >>> bit) & 1 ? String((value >>> bit) & 1) : '-';
+        sw.classList.toggle('tri-off', off && !inside);
       });
       _syncHex();
     },
     // Fills the row from pasted text; false if the text is neither a hex word nor a bit pattern.
     paste: ({ text = '' }) => {
-      const states = parseBits({ text });
+      const states = codec.pasteStates({ text });
       if (states) _apply({ states });
       return Boolean(states);
     },
-    // Marks the bits of an operand (mask over inst[31:0]), e.g. while its token is hovered.
-    highlight: ({ mask = 0 }) => switches.forEach((sw, i) => sw.classList.toggle('tri-mark', Boolean((mask >>> (31 - i)) & 1))),
-    // Greys out bits 31..16 once the word is known to be a 16 bit instruction.
-    dimUpper: ({ dim = false }) => {
-      switches.forEach((sw, i) => sw.classList.toggle('tri-off', dim && i < 16));
+    // Marks the bits of an operand (mask over the spine), e.g. while its token is hovered.
+    highlight: ({ mask = 0 }) => switches.forEach((sw, i) => sw.classList.toggle('tri-mark', Boolean((mask >>> (WIDTH - 1 - i)) & 1))),
+    // Greys out the bits outside an instruction (width null: not known yet), once they are known not to belong to it.
+    dim: ({ width = null, lsb = 0 }) => {
+      switches.forEach((sw, i) => sw.classList.toggle('tri-off', width !== null && (WIDTH - 1 - i < lsb || WIDTH - 1 - i >= lsb + width)));
       _syncHex();
     },
   };

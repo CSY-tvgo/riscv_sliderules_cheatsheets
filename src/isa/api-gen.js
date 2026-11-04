@@ -3,6 +3,7 @@ import fs from 'fs';
 import { formats, groups, instructions } from './rv32gc.mjs';
 import { compiled, pseudos } from './codec.mjs';
 import { registerFiles } from './register-files.mjs';
+import { isas } from './isas.mjs';
 
 console.log("Generating of API .json files...")
 
@@ -31,3 +32,20 @@ fs.writeFileSync(
     'public/isa/register-files.json',
     JSON.stringify(registerFiles, null, 2)
 )
+
+// The other instruction sets, one file each. Words are hex in memory order, as on their sheets.
+for (const { value, codec } of isas.filter((isa) => isa.codec && isa.value !== 'rv32gc')) {
+    const { name, formats, groups, sections, operands } = codec.spec;
+    fs.writeFileSync(
+        `public/isa/${value}.json`,
+        JSON.stringify({
+            name, formats, groups, sections,
+            operands: JSON.parse(JSON.stringify(operands ?? {})),
+            instructions: codec.compiled.map(({ id, name, group, extension, format, description, pseudocode, enc, asm, expands, width, mask, match }) => ({
+                id, name, group, extension, format, description, pseudocode, enc, asm, flags: expands, width,
+                mask: codec.hex({ word: mask, width }), match: codec.hex({ word: match, width }),
+            })),
+            pseudoInstructions: codec.pseudos.map(({ name, description, expansions }) => ({ name, description, expands: expansions.map(({ text }) => text) })),
+        }, null, 2)
+    )
+}

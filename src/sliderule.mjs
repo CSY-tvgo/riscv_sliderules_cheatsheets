@@ -1,47 +1,53 @@
-import { formats } from './isa/rv32gc.mjs';
 import { isas } from './isa/isas.mjs';
-import { decodeWord, encodeEntry, unusedOpcode, encodable, assemblyParts, fieldMask, partialDecode } from './isa/codec.mjs';
-import { decoderTable, decoderRows, readConstraints, writeBits, selectedWord, dimUpperHalf, pasteBits, highlightBits } from './selector.mjs';
-import { encoderTable, encoderRows, showEncodedBits, highlightEncodedBits, expandedColumns, setExpandedColumns } from './encoder.mjs';
+import { decoderSheet, decoderRows } from './selector.mjs';
+import { encoderSheet, encoderRows, showEncodedBits, highlightEncodedBits, expandedColumns, setExpandedColumns } from './encoder.mjs';
 import { OperandPanel } from './builders.mjs';
 import { Carousel } from './carousel.mjs';
 import { downloadPdf } from './pdf.mjs';
-import { hex, sheetHeader, flashChangedBits } from './cells.mjs';
+import { sheetHeader, contributeLink, flashChangedBits } from './cells.mjs';
 
 // The sliderule app: the Encoder (bits on the right, the default) or the Decoder (bits on the left), one at a time;
-// switching slides one sheet out and the other in around the 32 bit "spine" (see _switchTo). The URL hash always
+// switching slides one sheet out and the other in around the "spine" of bits (see _switchTo). The URL hash always
 // holds the whole state (view, selectors, operands, bits), so a copied link reproduces exactly what was on screen.
+// Each instruction set has its own sheets and state, made the first time it is chosen: _use makes them the current
+// ones, and everything below works on those (state, _elements, _codec).
 
 const SLIDE_MS = 650;
 const SLIDE_EASING = 'cubic-bezier(0.65, 0, 0.35, 1)';
 const RESIZE_MS = 220;
 const COPIED_MS = 1200;
-const EXTENSION_ORDER = ['I', 'M', 'A', 'F', 'D', 'Zicsr', 'Zifencei', 'C', 'C + F', 'C + D', 'PSEUDO'];
 const URL_KEYS = ['isa', 'ext', 'type', 'm', 'open', 'bits'];
 const COMING_SOON = '<Coming soon>';
-const state = { isa: isas[0], mode: 'encoder', ext: '*', type: '*', entry: null, encoded: null, operands: null, decoded: null, word: null, switching: false };
+const _sets = new Map(); // the sheets and state of each instruction set chosen so far
+let _app = null; // what all sets share: header, stage host, placeholder
+let _isa = isas[0];
+let _mode = 'encoder';
+let _switching = false;
+let state = null;
 let _elements = null;
+let _codec = null;
 
 // ---------------------------------------------------------------- assembly with coloured operands
 
 function _tokenTitle({ inst = {}, part = {}, fields = {} }) {
   if (!part.known) return `${part.text}: bits not set yet`;
   if (part.kind === 'imm') {
-    const v = fields.imm;
-    return `${inst.immName} = ${v} = ${v < 0 ? '-' : ''}0x${Math.abs(v).toString(16)}` + (inst.asmShift ? ` (written as imm >> ${inst.asmShift})` : '');
+    const v = fields[part.key];
+    return `${part.key === 'imm' ? inst.immName : part.key} = ${v} = ${v < 0 ? '-' : ''}0x${Math.abs(v).toString(16)}` + (inst.asmShift ? ` (written as imm >> ${inst.asmShift})` : '');
   }
+  if (_codec.spec.operands && _codec.spec.operands[part.key]) return `${part.key} = ${part.text}`;
   if (part.kind === 'reg' && part.key !== 'sp') return `${part.key} = ${(inst.fregs || []).includes(part.key) ? 'f' : 'x'}${fields[part.key]}`;
   return part.key ? `${part.key} = ${fields[part.key]}` : '';
 }
 
 // One instruction as tokens; hovering a token marks its bits in the switches (decoder only: onHover).
 function _assemblyLine({ inst = {}, fields = {}, onHover = null }) {
-  const parts = assemblyParts({ inst, fields });
+  const parts = _codec.assemblyParts({ inst, fields });
   return _span({ class: `asm-line fmt-${inst.format}` }, parts.map((part) => {
     if (part.kind === 'punct') return _span({ class: 'asm-punct' }, part.text);
     const token = _span({ class: `asm-token asm-${part.kind}` + (part.known ? '' : ' unknown'), title: _tokenTitle({ inst, part, fields }) }, part.text);
     if (onHover) {
-      const mask = part.kind === 'mnemonic' ? inst.mask : part.key === 'sp' ? 0 : fieldMask({ inst, key: part.key });
+      const mask = part.kind === 'mnemonic' ? inst.mask : part.key === 'sp' ? 0 : _codec.fieldMask({ inst, key: part.key });
       token.addEventListener('mouseenter', () => onHover({ mask }));
       token.addEventListener('mouseleave', () => onHover({ mask: 0 }));
     }
@@ -93,15 +99,16 @@ function _copyButton({ label = 'Copy', title = '', classes = 'tool-button', text
 
 function _stateParams() {
   const params = new URLSearchParams();
-  if (state.isa !== isas[0]) params.set('isa', state.isa.value);
+  if (_isa !== isas[0]) params.set('isa', _isa.value);
+  if (!_isa.codec) return params;
   if (state.ext !== '*') params.set('ext', state.ext);
   if (state.type !== '*') params.set('type', state.type);
   if (state.entry) {
     params.set('m', state.entry.id);
     for (const [key, value] of Object.entries(_elements.operands.state())) params.set(key, value);
   }
-  if (expandedColumns().length) params.set('open', expandedColumns().join(','));
-  const bits = readConstraints().join('').replace(/-/g, 'x');
+  if (expandedColumns({ sheet: _elements.encoder }).length) params.set('open', expandedColumns({ sheet: _elements.encoder }).join(','));
+  const bits = _elements.decoder.bits.read().join('').replace(/-/g, 'x');
   if (/[01]/.test(bits)) params.set('bits', bits);
   return params;
 }
@@ -110,7 +117,7 @@ function _writeUrl() {
   if (!_elements) return;
   const query = _stateParams().toString();
   try {
-    history.replaceState(null, '', `#${state.mode}${query ? '?' + query : ''}`);
+    history.replaceState(null, '', `#${_mode}${query ? '?' + query : ''}`);
   } catch (e) { /* sandboxed pages may refuse: the link then only holds the view */ }
 }
 
@@ -120,9 +127,9 @@ function _readUrl() {
 }
 
 function _restore({ params = new URLSearchParams() }) {
-  if (params.get('open')) setExpandedColumns({ keys: params.get('open').split(',') });
-  if (params.get('bits')) pasteBits({ text: params.get('bits') });
-  const entry = encodable.find((e) => e.id === params.get('m')) || null;
+  if (params.get('open')) setExpandedColumns({ sheet: _elements.encoder, keys: params.get('open').split(',') });
+  if (params.get('bits')) _elements.decoder.bits.paste({ text: params.get('bits') });
+  const entry = _codec.encodable.find((e) => e.id === params.get('m')) || null;
   if (entry) {
     _elements.operands.restore({ values: Object.fromEntries([...params].filter(([key]) => !URL_KEYS.includes(key))) });
     _selectEntry({ entry });
@@ -137,13 +144,13 @@ function _restore({ params = new URLSearchParams() }) {
 // ---------------------------------------------------------------- tools in the header (they act on the shown sheet)
 
 function _currentTable() {
-  return state.mode === 'encoder' ? _elements.encoder : _elements.decoder;
+  return (_mode === 'encoder' ? _elements.encoder : _elements.decoder).table;
 }
 
 function _pdfButton() {
   return _confirmingButton({ label: '⤓ PDF', classes: 'tool-button header-tool', done: 'Saved ✓',
     title: 'Download this sheet as you see it (A3 PDF). Clear first for the whole sheet.',
-    action: async () => downloadPdf({ header: _elements.header, element: _currentTable(), fileName: _fileName({ mode: state.mode }) }) });
+    action: async () => downloadPdf({ header: _app.header, element: _currentTable(), fileName: _fileName({ mode: _mode }) }) });
 }
 
 function _shareButton() {
@@ -155,8 +162,8 @@ function _shareButton() {
 }
 
 function _clear() {
-  if (state.mode === 'decoder') {
-    writeBits({ value: 0, mask: 0 });
+  if (_mode === 'decoder') {
+    _elements.decoder.bits.write({ value: 0, mask: 0 });
     refresh();
     return;
   }
@@ -166,8 +173,8 @@ function _clear() {
 }
 
 function _nothingToClear() {
-  if (!state.isa.ready) return true;
-  if (state.mode === 'decoder') return readConstraints().every((c) => c === '-');
+  if (!_isa.codec) return true;
+  if (_mode === 'decoder') return _elements.decoder.bits.read().every((c) => c === '-');
   return state.ext === '*' && state.type === '*' && !state.entry;
 }
 
@@ -183,44 +190,48 @@ function _replaceRows({ table = null, key = '', rows = () => [] }) {
 }
 
 function _renderDecoder() {
-  const constraints = readConstraints();
-  const word = selectedWord({ constraints });
-  const decoded = word === null ? null : decodeWord({ word });
+  const { bits } = _elements.decoder;
+  const { name, spine } = _codec.spec;
+  const constraints = bits.read();
+  const selected = _codec.selectedWord({ constraints });
+  const word = selected ? selected.word : null;
+  const decoded = word === null ? null : _codec.decodeWord({ word });
   const target = _elements.decoderResult;
+  const highlight = ({ mask = 0 }) => bits.highlight({ mask });
+  const width = _codec.knownWidth({ constraints });
   state.decoded = null;
-  dimUpperHalf({ dim: constraints[31] !== '-' && constraints[30] !== '-' && !(constraints[31] === '1' && constraints[30] === '1') });
-  highlightBits({ mask: 0 });
+  bits.dim({ width, lsb: spine.bytes && width ? spine.width - width : 0 });
+  bits.highlight({ mask: 0 });
   if (word === null) {
-    const partial = partialDecode({ constraints });
+    const partial = _codec.partialDecode({ constraints });
     if (constraints.every((c) => c === '-')) {
       _show({ target, content: 'Click 1 / 0 on the bits, type 0s and 1s (each one moves to the next bit), or click a bit and paste a word (0x… or 0101…): the instruction builds up here.' });
     } else if (partial.inst) {
-      // index 0 is bit 31: the instruction's own bits are the last `width` entries
-      const missing = constraints.slice(32 - partial.inst.width).filter((c) => c === '-').length;
+      const missing = _codec.missingBits({ inst: partial.inst, constraints });
       _show({ target, content: [
-        _div({ class: 'io-line' }, [_assemblyLine({ inst: partial.inst, fields: partial.fields, onHover: highlightBits })]),
+        _div({ class: 'io-line' }, [_assemblyLine({ inst: partial.inst, fields: partial.fields, onHover: highlight })]),
         _div({ class: 'io-note' }, `${missing} bit${missing === 1 ? '' : 's'} still unset`),
       ] });
     } else if (!partial.names.length) {
-      _show({ target, error: true, content: 'No RV32GC instruction starts with these bits.' });
+      _show({ target, error: true, content: `No ${name} instruction starts with these bits.` });
     } else {
       const shown = partial.names.slice(0, 8).join(', ') + (partial.names.length > 8 ? ', …' : '');
       _show({ target, content: `${partial.names.length} candidates: ${shown}` });
     }
   } else if (!decoded) {
-    const unused = (word & 3) === 3 ? unusedOpcode({ word }) : null;
+    const unused = selected.width === spine.width ? _codec.unusedOpcode({ word }) : null;
     _show({ target, error: true,
-      content: `${hex({ word, width: (word & 3) === 3 ? 32 : 16 })} is not a valid RV32GC instruction` + (unused ? ` (${unused.name} opcode: ${unused.note})` : '') });
+      content: `${_codec.hex(selected)} is not a valid ${name} instruction` + (unused ? ` (${unused.name} opcode: ${unused.note})` : '') });
   } else if (decoded.inst.reserved || decoded.inst.hint) {
-    _show({ target, content: [_div({ class: 'io-line' }, [_b({ class: 'io-asm' }, decoded.assembly), _span({ class: 'io-hex' }, hex({ word, width: decoded.inst.width }))])] });
+    _show({ target, content: [_div({ class: 'io-line' }, [_b({ class: 'io-asm' }, decoded.assembly), _span({ class: 'io-hex' }, _codec.hex({ word, width: decoded.inst.width }))])] });
   } else {
     const { inst, fields } = decoded;
     state.decoded = decoded;
     const lines = [_div({ class: 'io-line' }, [
-      _assemblyLine({ inst, fields, onHover: highlightBits }),
-      _span({ class: 'io-hex' }, hex({ word: decoded.word, width: inst.width })),
+      _assemblyLine({ inst, fields, onHover: highlight }),
+      _span({ class: 'io-hex' }, _codec.hex({ word: decoded.word, width: inst.width })),
     ])];
-    if (inst.immName) {
+    if (inst.immName && _codec.spec.alwaysImmediateRow) {
       const v = fields.imm;
       lines.push(_div({ class: 'io-note' }, `${inst.immName} = ${v} = ${v < 0 ? '-' : ''}0x${Math.abs(v).toString(16)} (${inst.immSigned ? 'sign' : 'zero'}-extended)`));
     }
@@ -228,38 +239,40 @@ function _renderDecoder() {
     _show({ target, content: lines });
   }
   _elements.decoderCopy.disabled = !state.decoded;
-  state.word = word === null ? null : { word, width: (word & 3) === 3 ? 32 : 16 };
+  state.word = selected;
   _elements.decoderWordCopies.forEach((button) => { button.disabled = word === null; });
   const onPattern = ({ inst }) => {
-    writeBits({ value: inst.match, mask: inst.mask, width: inst.width });
+    bits.write({ value: inst.match, mask: inst.mask, width: inst.width, lsb: inst.lsb });
     refresh();
   };
-  if (_replaceRows({ table: _elements.decoder, key: constraints.join(''), rows: () => decoderRows({ constraints, decoded, onPattern }) })) {
-    flashChangedBits({ table: _elements.decoder, id: state.decoded ? state.decoded.inst.id : null });
+  const sheet = _elements.decoder;
+  if (_replaceRows({ table: sheet.table, key: constraints.join(''), rows: () => decoderRows({ sheet, constraints, decoded, onPattern }) })) {
+    flashChangedBits({ table: sheet.table, id: state.decoded ? state.decoded.inst.id : null });
   }
 }
 
 // ---------------------------------------------------------------- encoder selectors
 
 function _filtered() {
-  return encodable.filter((e) => (state.ext === '*' || e.extension === state.ext) && (state.type === '*' || e.format === state.type));
+  return _codec.encodable.filter((e) => (state.ext === '*' || e.extension === state.ext) && (state.type === '*' || e.format === state.type));
 }
 
 function _extOptions() {
-  const present = new Set(encodable.map((e) => e.extension));
+  const present = new Set(_codec.encodable.map((e) => e.extension));
   return [{ value: '*', label: 'All', hint: 'every extension' },
-    ...EXTENSION_ORDER.filter((x) => present.has(x)).map((x) => ({ value: x, label: x === 'PSEUDO' ? 'Pseudo' : x, classes: x === 'PSEUDO' ? 'pseudo' : '' }))];
+    ..._codec.spec.extensions.filter((x) => present.has(x)).map((x) => ({ value: x, label: x === 'PSEUDO' ? 'Pseudo' : x, classes: x === 'PSEUDO' ? 'pseudo' : '' }))];
 }
 
 function _typeOptions() {
-  const present = new Set(encodable.filter((e) => state.ext === '*' || e.extension === state.ext).map((e) => e.format));
+  const { formats } = _codec.spec;
+  const present = new Set(_codec.encodable.filter((e) => state.ext === '*' || e.extension === state.ext).map((e) => e.format));
   const order = [...Object.keys(formats), '/'];
   return [{ value: '*', label: 'All', hint: 'every format' },
-    ...order.filter((f) => present.has(f)).map((f) => ({ value: f, label: f === '/' ? 'Multiple' : `${f}-Type`, hint: f === '/' ? 'expands to several instructions' : formats[f].title, classes: `fmt-${f}` }))];
+    ...order.filter((f) => present.has(f)).map((f) => ({ value: f, label: f === '/' ? 'Multiple' : _codec.typeName({ format: f }), hint: f === '/' ? 'expands to several instructions' : formats[f].title, classes: `fmt-${f}` }))];
 }
 
 function _mnemonicOptions({ entries = _filtered() } = {}) {
-  const rank = (e) => EXTENSION_ORDER.indexOf(e.extension);
+  const rank = (e) => _codec.spec.extensions.indexOf(e.extension);
   entries = [...entries].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
   return [{ value: '', label: '—', hint: 'any instruction' }, ...entries.map((e) => ({
     value: e.id, label: e.name, hint: e.asm || '', group: e.pseudo ? 'Pseudo-instructions' : `'${e.extension}'`, classes: e.pseudo ? 'pseudo' : `fmt-${e.format}`,
@@ -301,7 +314,7 @@ function _onOperands({ entry = null, operands = null, ordering = '' }) {
   state.encoded = null;
   if (entry && operands !== null) {
     try {
-      state.encoded = encodeEntry({ entry, operands, ordering });
+      state.encoded = _codec.encodeEntry({ entry, operands, ordering });
     } catch (e) {
       state.encoded = { error: e.message };
     }
@@ -310,7 +323,7 @@ function _onOperands({ entry = null, operands = null, ordering = '' }) {
 }
 
 function _words({ encoded = null, format = 'hex' }) {
-  return encoded ? encoded.words.map(({ word, inst }) => (format === 'hex' ? hex({ word, width: inst.width }) : (word >>> 0).toString(2).padStart(inst.width, '0'))) : [];
+  return encoded ? encoded.words.map(({ word, inst }) => _codec[format === 'hex' ? 'hex' : 'binary']({ word, width: inst.width })) : [];
 }
 
 function _renderEncoder() {
@@ -320,23 +333,25 @@ function _renderEncoder() {
   labels.count.textContent = state.entry ? '' : `${count} instruction${count === 1 ? '' : 's'}`;
   if (state.encoded && state.encoded.error) _show({ target: labels.assembly, content: state.encoded.error, error: true });
   // Hovering an operand marks its bits; only the first word is in the switches, so only its line does.
-  else _show({ target: labels.assembly, content: encoded ? encoded.words.map(({ inst, fields }, i) => _div({}, [_assemblyLine({ inst, fields, onHover: i === 0 ? highlightEncodedBits : null })])) : '' });
-  highlightEncodedBits({ mask: 0 });
+  const sheet = _elements.encoder;
+  const highlight = ({ mask = 0 }) => highlightEncodedBits({ sheet, mask });
+  if (!(state.encoded && state.encoded.error)) _show({ target: labels.assembly, content: encoded ? encoded.words.map(({ inst, fields }, i) => _div({}, [_assemblyLine({ inst, fields, onHover: i === 0 ? highlight : null })])) : '' });
+  highlight({ mask: 0 });
   _elements.encoderCopies.forEach((button) => { button.disabled = !encoded; });
-  showEncodedBits({ entry: state.entry, encoded });
+  showEncodedBits({ sheet, entry: state.entry, encoded });
   const key = JSON.stringify([state.ext, state.type, state.entry && state.entry.id, state.operands, encoded && encoded.words.map((w) => w.word)]);
-  const replaced = _replaceRows({ table: _elements.encoder, key, rows: () => encoderRows({
-    entries: _filtered(), entry: state.entry, encoded, operands: encoded ? state.operands : null, onPick: _selectEntry,
+  const replaced = _replaceRows({ table: sheet.table, key, rows: () => encoderRows({
+    sheet, entries: _filtered(), entry: state.entry, encoded, operands: encoded ? state.operands : null, onPick: _selectEntry,
   }) });
-  if (replaced) flashChangedBits({ table: _elements.encoder, id: encoded ? state.entry.id : null });
+  if (replaced) flashChangedBits({ table: sheet.table, id: encoded ? state.entry.id : null });
 }
 
 export function refresh() {
   if (!_elements) return;
-  if (state.mode === 'encoder') _renderEncoder();
+  if (_mode === 'encoder') _renderEncoder();
   else _renderDecoder();
   // Clear is only enabled when there is something to clear.
-  _elements.clear.disabled = _nothingToClear();
+  _app.clear.disabled = _nothingToClear();
   _writeUrl();
 }
 
@@ -377,8 +392,8 @@ function _visibleSpineCells({ table = null }) {
 }
 
 function _activate({ mode = 'encoder' }) {
-  _elements.decoder.parentElement.classList.toggle('active', mode === 'decoder');
-  _elements.encoder.parentElement.classList.toggle('active', mode === 'encoder');
+  _elements.decoder.table.parentElement.classList.toggle('active', mode === 'decoder');
+  _elements.encoder.table.parentElement.classList.toggle('active', mode === 'encoder');
 }
 
 // Both sheets slide sideways together by the distance between their bit columns: the columns only the old sheet
@@ -386,11 +401,11 @@ function _activate({ mode = 'encoder' }) {
 // the new sheet's bits fading in over the old ones. Nothing fades to white. The header does not move; the page
 // scrolls along to end fully left (the start of the sheet in view: the encoder's selectors, the decoder's bits).
 async function _switchTo({ mode = 'encoder' }) {
-  if (mode === state.mode || state.switching) return;
-  state.switching = true;
-  const from = state.mode === 'encoder' ? _elements.encoder : _elements.decoder;
-  const to = mode === 'encoder' ? _elements.encoder : _elements.decoder;
-  state.mode = mode;
+  if (mode === _mode || _switching) return;
+  _switching = true;
+  const from = _currentTable();
+  const to = (mode === 'encoder' ? _elements.encoder : _elements.decoder).table;
+  _mode = mode;
   _selectPill({ mode });
   refresh();
   const stage = _elements.stage;
@@ -399,7 +414,7 @@ async function _switchTo({ mode = 'encoder' }) {
       const shift = _spineOffset({ table: to }) - _spineOffset({ table: from });
       stage.classList.add('switching');
       to.parentElement.classList.add('incoming');
-      _elements.fitHeader();
+      _app.fitHeader();
       _scrollAlong({ to: 0 });
       const move = (x0, x1) => [{ transform: `translateX(${x0}px)` }, { transform: `translateX(${x1}px)` }];
       const animations = [
@@ -413,9 +428,9 @@ async function _switchTo({ mode = 'encoder' }) {
     to.parentElement.classList.remove('incoming');
     stage.classList.remove('switching');
     _activate({ mode });
-    _elements.fitHeader();
+    _app.fitHeader();
     window.scrollTo({ left: 0 });
-    state.switching = false;
+    _switching = false;
   }
 }
 
@@ -431,7 +446,7 @@ function _modePill() {
 }
 
 function _selectPill({ mode = 'encoder' }) {
-  for (const segment of _elements.pill.children) {
+  for (const segment of _app.pill.children) {
     const selected = segment.dataset.mode === mode;
     const label = segment.textContent;
     segment.classList.toggle('selected', selected);
@@ -472,56 +487,87 @@ function _stickHeaderRows({ table = null }) {
 // ---------------------------------------------------------------- instruction set
 
 function _isaPicker() {
-  const picker = Carousel({ label: 'instruction set', classes: 'title-carousel', value: state.isa.value,
-    options: isas.map((isa) => ({ ...isa, hint: isa.ready ? '' : 'Coming soon' })),
+  const picker = Carousel({ label: 'instruction set', classes: 'title-carousel', value: _isa.value,
+    options: isas.map(({ value, label, short, codec }) => ({ value, label, short, hint: codec ? '' : 'Coming soon' })),
     onChange: (value) => _selectIsa({ isa: isas.find((isa) => isa.value === value) }) });
   picker.querySelectorAll('.carousel-step').forEach((step) => step.classList.add('no-print'));
   return picker;
 }
 
-// An instruction set without sheets shows a placeholder instead; the sheets stay laid out (the header's width follows
-// them) and keep their state for coming back.
-function _selectIsa({ isa = isas[0] }) {
-  state.isa = isa;
-  _elements.isa.setValue(isa.value);
-  _elements.stage.classList.toggle('no-sheet', !isa.ready);
-  _elements.placeholder.hidden = isa.ready;
-  _elements.placeholder.replaceChildren(_div({ class: 'placeholder-title' }, isa.label), _div({ class: 'placeholder-bits' }, COMING_SOON));
-  for (const segment of _elements.pill.children) segment.disabled = !isa.ready;
-  _elements.pdf.disabled = !isa.ready;
+// The sheets of an instruction set become the current ones. restore: the URL's params, for the first time they are made.
+function _use({ isa = isas[0], restore = null }) {
+  const first = !_sets.has(isa.value);
+  if (first) _sets.set(isa.value, _createSets({ isa }));
+  ({ state, elements: _elements, codec: _codec } = _sets.get(isa.value));
+  _app.host.replaceChildren(_elements.stage);
+  _activate({ mode: _mode });
+  if (!first) return;
+  _restore({ params: restore || new URLSearchParams() });
+  // Each table only re-renders while shown: fill the hidden one once so it is ready for the switch.
+  if (_mode === 'encoder') _renderDecoder();
+  else _renderEncoder();
+  requestAnimationFrame(() => [_elements.decoder, _elements.encoder].forEach(({ table }) => _stickHeaderRows({ table })));
+}
+
+// An instruction set without sheets shows a placeholder instead; the last sheets stay laid out (the header's width
+// follows them). Each set keeps its state for coming back. Not while the sheets are sliding: they belong to one set.
+function _selectIsa({ isa = isas[0], restore = null }) {
+  if (_switching) {
+    _app.isa.setValue(_isa.value);
+    return;
+  }
+  _isa = isa;
+  _app.isa.setValue(isa.value);
+  if (isa.codec) _use({ isa, restore });
+  _elements.stage.classList.toggle('no-sheet', !isa.codec);
+  _app.placeholder.hidden = Boolean(isa.codec);
+  _app.placeholder.replaceChildren(_div({ class: 'placeholder-title' }, isa.label), _div({ class: 'placeholder-bits' }, COMING_SOON),
+    _div({ class: 'placeholder-link' }, [contributeLink()]));
+  _app.version.textContent = isa.version ?? '';
+  for (const segment of _app.pill.children) segment.disabled = !isa.codec;
+  _app.pdf.disabled = !isa.codec;
   refresh();
+  _app.fitHeader();
 }
 
 // ---------------------------------------------------------------- app
 
-function _encoderControls() {
+function _encoderControls({ codec = null }) {
   const ext = Carousel({ label: 'extension', options: _extOptions(), value: '*', onChange: (v) => { state.ext = v; _onFilter(); } });
   const type = Carousel({ label: 'format type', options: _typeOptions(), value: '*', onChange: (v) => { state.type = v; _onFilter(); } });
   const mnemonic = Carousel({ label: 'mnemonic', options: _mnemonicOptions(), value: '', searchable: true, classes: 'mnemonic-carousel',
-    searchAll: () => _mnemonicOptions({ entries: encodable }),
-    onChange: (id) => _selectEntry({ entry: encodable.find((e) => e.id === id) || null }) });
-  const operands = OperandPanel({ onChange: _onOperands });
+    searchAll: () => _mnemonicOptions({ entries: _codec.encodable }),
+    onChange: (id) => _selectEntry({ entry: _codec.encodable.find((e) => e.id === id) || null }) });
+  const operands = OperandPanel({ codec, onChange: _onOperands });
   return { ext, type, mnemonic, operands };
 }
 
 function _fileName({ mode = 'encoder' }) {
-  if (mode === 'encoder') return `RV32GC-Encoder${state.entry ? '-' + state.entry.name : ''}.pdf`;
-  return `RV32GC-Decoder${state.decoded ? '-' + state.decoded.inst.name : ''}.pdf`;
+  const { name } = _codec.spec;
+  if (mode === 'encoder') return `${name}-Encoder${state.entry ? '-' + state.entry.name : ''}.pdf`;
+  return `${name}-Decoder${state.decoded ? '-' + state.decoded.inst.name : ''}.pdf`;
 }
 
-export function Sliderule() {
+// The sheets, and the state, of one instruction set.
+function _createSets({ isa = {} }) {
+  const { codec } = isa;
+  const set = { codec, elements: null, state: { ext: '*', type: '*', entry: null, encoded: null, operands: null, decoded: null, word: null } };
+  // The selectors look at the current set while they are built.
+  const previous = { state, _elements, _codec };
+  state = set.state;
+  _codec = codec;
   const decoderResult = _div({ class: 'io-result smooth-height' }, '');
   const decoderCopy = _copyButton({ label: 'Copy', title: 'Copy the assembly (once the instruction is complete)', text: () => state.decoded.assembly });
-  const decodedWord = (format) => () => (format === 'hex' ? hex(state.word) : (state.word.word >>> 0).toString(2).padStart(state.word.width, '0'));
+  const decodedWord = (format) => () => _codec[format === 'hex' ? 'hex' : 'binary'](state.word);
   const decoderWordCopies = [
     _copyButton({ label: 'Copy bin', title: 'Copy the bits as binary (once every bit of the instruction is set)', classes: 'tool-button on-section', text: decodedWord('bin') }),
     _copyButton({ label: 'Copy hex', title: 'Copy the bits as hex (once every bit of the instruction is set)', classes: 'tool-button on-section', text: decodedWord('hex') }),
   ];
-  const decoder = decoderTable({ onBits: refresh,
+  const decoder = decoderSheet({ codec, onBits: refresh,
     copies: { binary: decoderWordCopies[0], hex: decoderWordCopies[1] },
     io: _div({ class: 'io' }, [decoderResult, _div({ class: 'io-tools' }, [decoderCopy])]) });
 
-  const selectors = _encoderControls();
+  const selectors = _encoderControls({ codec });
   const encoderLabels = {
     count: _span({ class: 'section-count' }, ''),
     assembly: _div({ class: 'section-value section-asm smooth-height' }, ''),
@@ -532,7 +578,8 @@ export function Sliderule() {
     _copyButton({ label: 'Copy bin', title: 'Copy the encoding as binary (one word per line)', classes: 'tool-button on-section', text: words('bin') }),
     _copyButton({ label: 'Copy hex', title: 'Copy the encoding as hex (one word per line)', classes: 'tool-button on-section', text: words('hex') }),
   ];
-  const encoder = encoderTable({
+  const encoder = encoderSheet({
+    codec,
     controls: selectors,
     labels: {
       meaning: encoderLabels.count,
@@ -544,27 +591,32 @@ export function Sliderule() {
     onLayout: _writeUrl,
   });
 
+  const stage = _div({ id: 'sliderule', class: 'stage' }, [_div({ class: 'view' }, [decoder.table]), _div({ class: 'view' }, [encoder.table])]);
+  set.elements = { decoder, encoder, decoderResult, decoderCopy, decoderWordCopies, encoderLabels, encoderCopies, selectors, operands: selectors.operands, stage };
+  ({ state, _elements, _codec } = previous);
+  return set;
+}
+
+export function Sliderule() {
   const pill = _modePill();
   const clear = _button({ label: 'Clear', classes: 'tool-button header-tool', title: 'Back to the whole sheet', onClick: _clear });
   const pdf = _pdfButton();
   const isa = _isaPicker();
-  const header = sheetHeader({ isaPicker: isa, switcher: pill, tools: [clear, pdf, _shareButton()] });
-  const stage = _div({ id: 'sliderule', class: 'stage' }, [_div({ class: 'view' }, [decoder]), _div({ class: 'view' }, [encoder])]);
+  const version = _span({ class: 'header-version', title: 'Version of this sheet' }, '');
+  const header = sheetHeader({ isaPicker: isa, version, switcher: pill, tools: [clear, pdf, _shareButton()] });
+  const host = _div({ class: 'stage-host' }, '');
   const placeholder = _div({ class: 'sheet-placeholder' }, '');
-  const app = _div({ class: 'sliderules-app' }, [header, placeholder, stage]);
-  _elements = { fitHeader: () => {}, header, placeholder, isa, pill, clear, pdf, decoder, encoder, decoderResult, decoderCopy, decoderWordCopies, encoderLabels, encoderCopies, selectors, operands: selectors.operands, stage };
+  const app = _div({ class: 'sliderules-app' }, [header, placeholder, host]);
+  _app = { fitHeader: () => {}, header, placeholder, host, isa, version, pill, clear, pdf };
   const { mode, params } = _readUrl();
-  state.mode = mode;
+  const chosen = isas.find(({ value }) => value === params.get('isa')) || isas[0];
+  _mode = mode;
   _selectPill({ mode });
-  _activate({ mode });
-  _restore({ params });
-  // Each table only re-renders while shown: fill the hidden one once so it is ready for the switch.
-  if (mode === 'encoder') _renderDecoder();
-  else _renderEncoder();
-  _selectIsa({ isa: isas.find((isa) => isa.value === params.get('isa')) });
+  // The default set always has sheets: a placeholder chosen first keeps the page laid out around them.
+  if (!chosen.codec) _use({ isa: isas[0] });
+  _selectIsa({ isa: chosen, restore: params });
   requestAnimationFrame(() => {
-    [decoder, encoder].forEach((table) => _stickHeaderRows({ table }));
-    _elements.fitHeader = _fitHeader({ app, header, placeholder });
+    _app.fitHeader = _fitHeader({ app, header, placeholder });
   });
   return app;
 }

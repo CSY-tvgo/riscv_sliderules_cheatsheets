@@ -1,4 +1,4 @@
-import { operandInfo, templateParts, X_ABI, F_ABI, ROUNDING, CSRS, fenceText } from './isa/codec.mjs';
+import { splitOperands, X_ABI, F_ABI, ROUNDING, CSRS, fenceText } from './isa/codec.mjs';
 import { Carousel } from './carousel.mjs';
 
 // Encoder operands: one selector per operand of the chosen instruction. Registers, CSRs, rounding modes and fence
@@ -21,10 +21,10 @@ function _registerOptions({ info = {} }) {
 
 function _parseNumber({ text = '' }) {
   const t = text.trim().toLowerCase().replace(/_/g, '');
-  const m = t.match(/^(-?)(0x[0-9a-f]+|0b[01]+|\d+)$/);
+  const m = t.match(/^(-?)(0x[0-9a-f]+|\$[0-9a-f]+|0b[01]+|\d+)$/);
   if (!m) return null;
   const body = m[2];
-  const value = body.startsWith('0b') ? parseInt(body.slice(2), 2) : Number(body);
+  const value = body.startsWith('0b') ? parseInt(body.slice(2), 2) : body.startsWith('$') ? parseInt(body.slice(1), 16) : Number(body);
   return m[1] ? -value : value;
 }
 
@@ -53,7 +53,7 @@ function _ImmediateControl({ token = 'imm', range = {}, value = 0, onChange = ()
     'aria-label': `${token} slider`, title: `${token}: ${hint}` });
   const field = _input({ class: 'imm-field', type: 'text', inputmode: 'numeric', spellcheck: 'false', 'aria-label': token });
   const describe = (problem = null) => {
-    field.title = problem ? `${token} ${problem}` : `${token} = ${_value} = ${_hex({ value: _value })}\n${hint} (decimal, 0x… or 0b…; scroll to step)`;
+    field.title = problem ? `${token} ${problem}` : `${token} = ${_value} = ${_hex({ value: _value })}\n${hint} (decimal, 0x…, $… or 0b…; scroll to step)`;
     field.classList.toggle('invalid', Boolean(problem));
   };
   const set = ({ newValue = 0, from = null }) => {
@@ -87,8 +87,14 @@ function _ImmediateControl({ token = 'imm', range = {}, value = 0, onChange = ()
   return { slider, field };
 }
 
-function _controlFor({ token = 'rd', info = {}, memory = {}, onChange = () => {} }) {
-  const key = token.replace("'", '');
+function _controlFor({ codec = null, token = 'rd', info = {}, memory = {}, onChange = () => {} }) {
+  const key = codec.tokenKey(token);
+  if (info.kind === 'enum') {
+    const options = info.names.map((label, value) => ({ value, label, hint: value.toString(2) })).filter(({ value }) => !info.exclude.includes(value));
+    const value = options.some((o) => o.value === memory[key]) ? memory[key] : options[0].value;
+    memory[key] = value;
+    return Carousel({ options, value, label: token, searchable: options.length > 8, onChange: (v) => { memory[key] = v; onChange(); } });
+  }
   if (info.kind === 'reg') {
     const options = _registerOptions({ info });
     const remembered = memory[key];
@@ -98,9 +104,9 @@ function _controlFor({ token = 'rd', info = {}, memory = {}, onChange = () => {}
     return Carousel({ options, value, label: token, searchable: true, onChange: (v) => { memory[key] = v; onChange(); } });
   }
   if (info.kind === 'imm') {
-    const value = memory.imm !== undefined && !_immProblem({ value: memory.imm, range: info.range }) ? memory.imm : _immDefault({ range: info.range });
-    memory.imm = value;
-    const { slider, field } = _ImmediateControl({ token, range: info.range, value, onChange: (v) => { memory.imm = v; onChange(); } });
+    const value = memory[key] !== undefined && !_immProblem({ value: memory[key], range: info.range }) ? memory[key] : _immDefault({ range: info.range });
+    memory[key] = value;
+    const { slider, field } = _ImmediateControl({ token, range: info.range, value, onChange: (v) => { memory[key] = v; onChange(); } });
     field.topExtra = slider;
     return field;
   }
@@ -124,9 +130,10 @@ function _controlFor({ token = 'rd', info = {}, memory = {}, onChange = () => {}
   return Carousel({ options, value, label: token, onChange: (v) => { memory[key] = v; onChange(); } });
 }
 
-function _valueText({ token = 'rd', info = {}, memory = {} }) {
-  const key = token.replace("'", '');
+function _valueText({ codec = null, token = 'rd', info = {}, memory = {} }) {
+  const key = codec.tokenKey(token);
   if (info.kind === 'sp') return 'sp';
+  if (info.kind === 'enum' || info.key) return codec.operandText({ key, value: memory[key] });
   if (info.kind === 'reg') return (info.fp ? F_ABI : X_ABI)[memory[key]];
   if (info.kind === 'imm') return String(memory.imm);
   return String(memory[key]);
@@ -151,7 +158,8 @@ function _operandColumn({ name = '', control = null, kind = 'reg' }) {
   ]);
 }
 
-export function OperandPanel({ onChange = () => {} }) {
+export function OperandPanel({ codec = null, onChange = () => {} }) {
+  const { operandInfo, templateParts } = codec;
   const memory = {};
   let _entry = null;
   let _template = [];
@@ -162,7 +170,7 @@ export function OperandPanel({ onChange = () => {} }) {
 
   panel.show = ({ entry = null }) => {
     _entry = entry;
-    _template = entry ? (entry.asm || '').split(',').map((op) => op.trim()).filter((op) => op !== '') : [];
+    _template = entry ? splitOperands({ text: entry.asm }) : [];
     _keys = [];
     const columns = [];
     for (const op of _template) {
@@ -170,8 +178,8 @@ export function OperandPanel({ onChange = () => {} }) {
         if (!part.token) continue;
         const info = operandInfo({ entry, token: part.token });
         if (info.kind === 'sp') continue;
-        _keys.push(part.token.replace("'", ''));
-        columns.push(_operandColumn({ name: part.token, kind: info.kind, control: _controlFor({ token: part.token, info, memory, onChange: emit }) }));
+        _keys.push(codec.tokenKey(part.token));
+        columns.push(_operandColumn({ name: part.token, kind: info.kind, control: _controlFor({ codec, token: part.token, info, memory, onChange: emit }) }));
       }
     }
     if (_hasOrdering({ entry })) {
@@ -191,7 +199,7 @@ export function OperandPanel({ onChange = () => {} }) {
   panel.read = () => {
     if (!_entry) return { entry: null, operands: null, ordering: '' };
     const operands = _template.map((op) => templateParts({ op })
-      .map((part) => (part.token ? _valueText({ token: part.token, info: operandInfo({ entry: _entry, token: part.token }), memory }) : part.text))
+      .map((part) => (part.token ? _valueText({ codec, token: part.token, info: operandInfo({ entry: _entry, token: part.token }), memory }) : part.text))
       .join('')).join(', ');
     return { entry: _entry, operands, ordering: _hasOrdering({ entry: _entry }) ? memory.ordering || '' : '' };
   };
@@ -201,7 +209,7 @@ export function OperandPanel({ onChange = () => {} }) {
   panel.restore = ({ values = {} }) => {
     // Values that do not fit the instruction are replaced by defaults when its selectors are built.
     for (const [key, value] of Object.entries(values)) {
-      const numeric = ['rd', 'rs1', 'rs2', 'rs3', 'rs', 'rt', 'imm'].includes(key);
+      const numeric = codec.numericOperand({ key });
       if (numeric && Number.isFinite(Number(value))) memory[key] = Number(value);
       else if (!numeric) memory[key] = String(value);
     }

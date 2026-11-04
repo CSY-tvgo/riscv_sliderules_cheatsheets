@@ -1,4 +1,4 @@
-import { encodable, operandInfo, templateParts, X_ABI, F_ABI, ROUNDING, CSRS, fenceText } from '../src/isa/codec.mjs';
+import { rv32, splitOperands, X_ABI, F_ABI, ROUNDING, CSRS, fenceText } from '../src/isa/codec.mjs';
 
 // Operand sets for every encodable entry, shared by the tests and the GNU as vector generator.
 // Deterministic (seeded) so regenerated vectors line up with the cases the tests build.
@@ -41,14 +41,23 @@ function _immediate({ random, range = {}, edge = null }) {
 }
 
 // One operand text (and ordering) for an entry, as the encoder's operand panel would produce it.
-export function operandSet({ entry = {}, random, edge = null }) {
-  const template = (entry.asm || '').split(',').map((op) => op.trim()).filter((op) => op !== '');
+export function operandSet({ codec = rv32, entry = {}, random, edge = null }) {
+  const { operandInfo, templateParts, tokenKey, operandText } = codec;
+  const template = splitOperands({ text: entry.asm });
   const values = {};
   const operands = template.map((op) => templateParts({ op }).map((part) => {
     if (!part.token) return part.text;
     const info = operandInfo({ entry, token: part.token });
-    const key = part.token.replace("'", '');
+    const key = tokenKey(part.token);
     if (info.kind === 'sp') return 'sp';
+    if (info.kind === 'enum') {
+      values[key] = _pick({ random, list: info.names.map((_, n) => n).filter((n) => !info.exclude.includes(n)) });
+      return info.names[values[key]];
+    }
+    if (info.kind === 'imm' && info.key) {
+      values[key] = _immediate({ random, range: info.range, edge });
+      return operandText({ key, value: values[key] });
+    }
     if (info.kind === 'reg') {
       values[key] = _pick({ random, list: _registers({ info }) });
       return (info.fp ? F_ABI : X_ABI)[values[key]];
@@ -64,16 +73,16 @@ export function operandSet({ entry = {}, random, edge = null }) {
 }
 
 // Every entry with a few random operand sets plus the immediate's range edges.
-export function allCases({ perEntry = 4, seed = 2026 } = {}) {
+export function allCases({ codec = rv32, perEntry = 4, seed = 2026 } = {}) {
   const random = rng({ seed });
   const cases = [];
-  for (const entry of encodable) {
-    const hasImm = /\bimm\b/.test(entry.asm || '');
+  for (const entry of codec.encodable) {
+    const hasImm = /\bimm\b/.test(entry.asm || '') || (entry.segments || []).some((s) => s.kind === 'imm');
     const edges = hasImm ? [null, 'min', 'max'] : [null];
     const runs = entry.asm ? perEntry : 1;
     for (let i = 0; i < runs + edges.length - 1; i++) {
       const edge = i < runs ? null : edges[i - runs + 1];
-      cases.push({ id: entry.id, entry, ...operandSet({ entry, random, edge }) });
+      cases.push({ id: entry.id, entry, ...operandSet({ codec, entry, random, edge }) });
     }
   }
   return cases;

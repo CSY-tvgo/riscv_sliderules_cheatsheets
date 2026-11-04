@@ -1,26 +1,26 @@
 # RISC-V Sliderules: notes for coding agents
 
-An RV32GC encoder / decoder rendered as two big HTML tables (the "sliderules"). Plain ES modules, no framework, built
-as a library with Vite. Read this before changing anything; the most common change, adding an instruction set
-extension, has its own checklist below.
+An instruction encoder / decoder rendered as two big HTML tables (the "sliderules"), for RV32GC, the Z80, the 6502 and
+the Hack computer. Plain ES modules, no framework, built as a library with Vite. Read this before changing anything;
+the most common changes, adding a RISC-V extension or a whole instruction set, have their own checklists below.
 
 ## Layout
 
 | Path | What it is |
 | --- | --- |
-| `src/isa/rv32gc.mjs` | **All instruction data**: formats, decoder sections, groups, instructions, unused opcodes, pseudo-instructions. Encodings are strings in the spec's notation. |
-| `src/isa/isas.mjs` | The instruction sets of the selector in the title. Only `ready` ones have sheets; the others show a `<Coming soon>` placeholder (`_selectIsa` in `src/sliderule.mjs`). |
-| `src/isa/codec.mjs` | Everything derived from that data: parsing encodings into segments, masks, matching, decoding, encoding, pseudo-instruction expansion, operand descriptions for the UI. No DOM. |
+| `src/isa/rv32gc.mjs`, `hack.mjs`, `mos6502.mjs`, `z80.mjs` | **All instruction data**, one module per instruction set: formats, decoder sections, groups, instructions, unused opcodes, pseudo-instructions. Encodings are strings in the spec's notation. |
+| `src/isa/isas.mjs` | The instruction sets of the selector in the title. Those with a `codec` have sheets; the others show a `<Coming soon>` placeholder (`_selectIsa` in `src/sliderule.mjs`). |
+| `src/isa/codec.mjs` | Everything derived from that data, per set (`createCodec`): parsing encodings into segments, masks, matching, decoding, encoding, pseudo-instruction expansion, operand descriptions for the UI, the spine. No DOM. Its named exports are RV32GC's. |
 | `src/isa/api-gen.js` | Writes `public/isa/*.json` (the data as an API) during `npm run build`. |
-| `src/sliderule.mjs` | The app: state, encoder selectors, decoder output, header tools, URL state (share links), view switching animation. |
+| `src/sliderule.mjs` | The app: per set state and sheets (`_use`), encoder selectors, decoder output, header tools, URL state (share links), view switching animation. |
 | `src/encoder.mjs`, `src/selector.mjs` | Encoder table (a2b) and decoder table (b2a). |
 | `src/cells.mjs` | Table cells shared by both tables, the header above them (title, pill, tools, credits). |
-| `src/carousel.mjs`, `src/builders.mjs`, `src/tristate.mjs` | Carousel selector, encoder operand selectors, the 32 bit 0/1/x switches with their hex digits. |
+| `src/carousel.mjs`, `src/builders.mjs`, `src/tristate.mjs` | Carousel selector, encoder operand selectors, the 0/1/x switches of the spine with their hex digits. |
 | `src/pdf.mjs` | PDF download of the visible sheet (loads html-to-image and jsPDF from CDNs on demand). |
 | `public/` | Copied as is into the build: `styles.css`, `embed.js` (one-line embedding), `index.html` (the site, uses `embed.js`). |
 | `index.html`, `src/dev.mjs` | Development entry (`npm run dev`): mounts the sheets straight from `src/`. |
 | `docs/` | README screenshots: retake them when the UI changes visibly. |
-| `test/` | `node --test` suites, shared test cases, the GNU as vector generator and its output. |
+| `test/` | `node --test` suites, shared test cases, the vector generators (GNU as, py65, skoolkit) and their output. |
 | `dist/` | Build output (git-ignored), **served live** as sliderules.magiwanders.com. Only `npm run build` writes it. |
 
 ## Conventions
@@ -29,8 +29,8 @@ extension, has its own checklist below.
   `cell({ width: 2 })`. Module-private helpers start with `_`.
 - DOM elements come from the global helpers of `https://cdn.magiwanders.com/main.js`: `_div(attributes, children)`,
   `_td(...)`, `_button(...)` and so on, one per HTML tag. Do not shadow them (no local variable called `_table`).
-- Instruction knowledge lives in `rv32gc.mjs` only. If you find yourself writing an instruction name in UI code,
-  add a property to the data instead (see `asmShift`, `rmDefault`, `nonZeroImm`).
+- Instruction knowledge lives in the instruction set modules only. If you find yourself writing an instruction name
+  in UI code, add a property to the data instead (see `asmShift`, `rmDefault`, `nonZeroImm`).
 - Comments say why, briefly, in the style of the surrounding code. Two-space indent, single quotes, semicolons.
 - Colours: see *Colour palette* below.
 
@@ -65,6 +65,11 @@ The colours come from the original spreadsheet sheets (Google Sheets' palette) a
   (teal); reserved encodings `--reserved` `#ff0000`; pseudo-instructions `--pseudo` `#ff00ff` (magenta, white bold
   text); the unused upper half of a compressed instruction `--unused` `#000000`; HINTs, unused opcodes, `x` / zero
   bits `--muted` `#f3f3f3` with grey text.
+- **The other instruction sets reuse these hues** by what a format mirrors, so a colour means the same on every sheet:
+  operands in registers red (Hack's C, `IMP`, `ACC`, `REG`), immediates green (Hack's A, `IMM`), short addresses yellow
+  (`ZP`, `ZPX`, `ZPY`), long ones blue (`ABS`, `ABX`, `ABY`, `EXT`), pointers purple (`IND`) or magenta (`IZX`, `IZY`,
+  `IDX`), relative jumps orange (`REL`), bit operations tan (`BIT`). Bytes a byte instruction does not have are
+  `--muted` (`.bit.absent`), not black: most rows have some, and on these sheets nothing else lives there.
 - **Registers and opcode bits are white** (`--register`) in every format, so the format colour marks what the
   instruction does, not where its operands are.
 - **Immediates are derived, not picked**: the pieces of a split immediate get four shades of `--strong`
@@ -97,8 +102,8 @@ Work through these in order; most extensions only need steps 1, 2, 5 and 6.
 4. **New operand kind?** (a field that is not a register, immediate, csr, rm, fence set or aq/rl, e.g. a vector mask.)
    Extend `FIELDS` / `OPERAND` and `operandInfo` in `codec.mjs`, `_controlFor` in `builders.mjs` (its selector),
    `assemblyParts` (how it prints) and `test/cases.mjs` (how tests pick values).
-5. **Ext selector**: add the extension name to `EXTENSION_ORDER` in `src/sliderule.mjs`. Entries whose extension is
-   not listed there cannot be reached through the Ext selector.
+5. **Ext selector**: add the extension name to `extensions` in `rv32gc.mjs`. Entries whose extension is not listed there
+   cannot be reached through the Ext selector.
 6. **Opcodes**: if the extension takes an opcode listed in `unusedOpcodes`, remove it from there.
 7. **Pseudo-instructions** (`pseudoInstructions`): `expands` lists `[base instruction, mapping]` pairs; in a mapping a
    number fixes the base field, a string passes a pseudo operand, `'hi'` / `'lo'` split a 32 bit value as `lui` /
@@ -106,11 +111,42 @@ Work through these in order; most extensions only need steps 1, 2, 5 and 6.
 8. **Title**: the header says "Sliderule RV32GC Cheatsheet", the middle being the instruction set selector (its names
    are in `src/isa/isas.mjs`); update the label if the extension changes the name.
 
+## Adding an instruction set
+
+The sheets, the selectors and the codec all work from what an instruction set module exports (`createCodec` in
+`codec.mjs` lists it; `hack.mjs` is the small example, `z80.mjs` the full one). To turn a placeholder in `isas.mjs` into
+real sheets:
+
+1. **The spine**, `spine = { width, title, bytes }`: as many switches as the longest instruction has bits, a multiple
+   of 4. With `bytes` an instruction starts on the left in memory order, the bytes it does not have stay empty on the
+   right, and bits are numbered per byte (for little-endian byte machines: the 6502, the Z80, x86). Without it,
+   inst[0] is the rightmost switch and shorter instructions sit on the right. Everything in the codec counts in spine
+   positions, so a word of a shorter byte instruction has its bits at the top: use `codec.hex` / `codec.binary`.
+2. **Data**: `formats`, `sections`, `groups`, `instructions`, `extensions` as in the extension checklist. A format needs
+   a `width` and `layout` only for instruction sets with fixed fields; without them the decoder's group headers come
+   from the members' encodings, and a group's members must have the same width. Keep `sections` keys in the decoder's
+   order. Encoding `name[7:0|15:8]` is a little-endian immediate.
+3. **Operands**: `immediates` names the immediates of the encodings (`{ name: signed }`, all of them the operand `imm`,
+   only one per instruction), `operands` everything else: `{ width, names, exclude }` for what is chosen from a list,
+   `{ width, signed, text }` for a second number. Their names are the tokens of `enc` and `asm`; write everything
+   else in `asm` in upper case so it stays literal. `repeatedNames` when a mnemonic has several rows (`LD`, `LDA`).
+4. **Telling instructions apart**: without `widthOf` the width comes from which instructions the bits still allow,
+   which suits prefixes and opcodes. Instruction sets that read differently: `separator`, `immText`, and for assembly
+   that does not start with a mnemonic `arrange` and `parseAssembly` (Hack's `dest=comp;jump`).
+5. **Sheets**: `labels` retitles columns (`null` leaves the Expansion column out; `expands` is what it shows),
+   `widths` sizes them, `plainFormats` drops "-Type", `listedOrder` keeps the data's order in the encoder.
+6. **Colours**: a `.fmt-<FORMAT>` rule per format, following the palette above.
+7. **Register it** in `isas.mjs` with `codec: createCodec(module)` and a `version` (v0.1 until its text is reviewed too,
+   see Testing in the README, and add it to that table); `api-gen.js` generates its API file.
+8. **Reference**: never type opcode tables from memory unchecked. Compare against an independent assembler as
+   `test/gen-retro-vectors.mjs` does, including that every opcode it knows is either listed or deliberately left out.
+
 ## Checking your change
 
 ```sh
 npm test           # known encodings, round trip of every instruction, pseudo-instructions, partial decoding
 npm run vectors    # re-assemble every test case with GNU as into test/vectors/gnu-as.json (then npm test again)
+npm run vectors:retro  # the same for the 6502 and the Z80 with py65 and skoolkit (PYTHON=... for a venv with them)
 npm run dev        # look at both sheets: http://localhost:5173
 ```
 
