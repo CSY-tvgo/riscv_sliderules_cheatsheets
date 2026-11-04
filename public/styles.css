@@ -40,9 +40,15 @@
 
 /* While switching, both sheets are shown and slide sideways (see _switchTo): what leaves the stage is clipped
    there, the incoming sheet is drawn over the outgoing one. */
+.stage.no-sheet { width: 0; height: 0; overflow: hidden; }
 .stage.switching { overflow-x: clip; }
 .stage.switching > .view { visibility: visible; height: auto; overflow: visible; }
 .stage.switching > .view.incoming { position: relative; z-index: 1; }
+
+/* In place of the sheets of an instruction set that has none yet; as wide as the header and in view with it. */
+.sheet-placeholder { position: sticky; left: 16px; box-sizing: border-box; border: 1px solid var(--grid); text-align: center; }
+.placeholder-title { padding: 4px; background: var(--section); color: #fff; font-size: 12px; font-weight: bold; }
+.placeholder-bits { padding: 48px 8px; color: #888; font: 16px ui-monospace, Menlo, Consolas, monospace; }
 
 /* ---------- sliderule table ---------- */
 
@@ -67,7 +73,7 @@ table.sliderule {
 .sliderules-app { width: max-content; min-width: 100%; }
 .sheet-header { position: sticky; left: 16px; box-sizing: border-box; margin-bottom: 8px; transition: width 0.65s cubic-bezier(0.65, 0, 0.35, 1); }
 .header-main { display: flex; align-items: center; gap: 14px; }
-.header-title { font-size: 22px; font-weight: bold; letter-spacing: 1px; white-space: nowrap; }
+.header-title { display: inline-flex; align-items: center; gap: 8px; font-size: 22px; font-weight: bold; letter-spacing: 1px; white-space: nowrap; }
 .header-tools { display: flex; gap: 4px; margin-left: auto; }
 .tool-button.header-tool { padding: 6px 12px; font-size: 12px; font-weight: bold; }
 .header-sub { display: flex; align-items: center; gap: 12px; margin-top: 3px; font-size: 10px; color: #555; }
@@ -102,8 +108,9 @@ table.sliderule {
 }
 
 .mode-segment.selected { background: var(--section); color: #fff; cursor: default; }
-.mode-segment:not(.selected):hover,
-.mode-segment:not(.selected):focus-visible { background: #e3eef0; outline: none; }
+.mode-segment:disabled { opacity: 0.5; cursor: default; }
+.mode-segment:not(.selected):not(:disabled):hover,
+.mode-segment:not(.selected):not(:disabled):focus-visible { background: #e3eef0; outline: none; }
 
 .sliderule .label-row th {
   background: var(--section);
@@ -306,6 +313,8 @@ table.sliderule {
 .operand-bottom .carousel { height: 26px; font-size: 11px; }
 .hex-carousel { height: 20px; font-size: 12px; }
 .hex-carousel .carousel-step { width: 14px; }
+/* In the title: as big as the title, and as wide as its longest value, so the steps stay under the mouse. */
+.title-carousel { flex: none; width: 196px; height: 30px; font: inherit; }
 .carousel.readonly .carousel-step { display: none; }
 .carousel.readonly .carousel-value { border: none; color: var(--text); cursor: default; }
 .carousel.readonly:hover { border-color: var(--grid); }

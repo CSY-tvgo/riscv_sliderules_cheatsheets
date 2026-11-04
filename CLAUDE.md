@@ -9,6 +9,7 @@ extension, has its own checklist below.
 | Path | What it is |
 | --- | --- |
 | `src/isa/rv32gc.mjs` | **All instruction data**: formats, decoder sections, groups, instructions, unused opcodes, pseudo-instructions. Encodings are strings in the spec's notation. |
+| `src/isa/isas.mjs` | The instruction sets of the selector in the title. Only `ready` ones have sheets; the others show a `<Coming soon>` placeholder (`_selectIsa` in `src/sliderule.mjs`). |
 | `src/isa/codec.mjs` | Everything derived from that data: parsing encodings into segments, masks, matching, decoding, encoding, pseudo-instruction expansion, operand descriptions for the UI. No DOM. |
 | `src/isa/api-gen.js` | Writes `public/isa/*.json` (the data as an API) during `npm run build`. |
 | `src/sliderule.mjs` | The app: state, encoder selectors, decoder output, header tools, URL state (share links), view switching animation. |
@@ -102,8 +103,8 @@ Work through these in order; most extensions only need steps 1, 2, 5 and 6.
 7. **Pseudo-instructions** (`pseudoInstructions`): `expands` lists `[base instruction, mapping]` pairs; in a mapping a
    number fixes the base field, a string passes a pseudo operand, `'hi'` / `'lo'` split a 32 bit value as `lui` /
    `auipc` + `addi` do.
-8. **Title**: the header says "Sliderule RV32GC Cheatsheet" (`sheetHeader` in `src/cells.mjs`); update it if the
-   extension changes the name.
+8. **Title**: the header says "Sliderule RV32GC Cheatsheet", the middle being the instruction set selector (its names
+   are in `src/isa/isas.mjs`); update the label if the extension changes the name.
 
 ## Checking your change
 

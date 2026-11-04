@@ -160,13 +160,13 @@ function _credits() {
   ]);
 }
 
-// The header above both sheets (it does not move when switching): the title and the Encoder / Decoder pill on the
-// left, the tools (PDF, Clear, Share) on the right; credits, the license and the contribution link below. Tools and the
-// contribution link are left out of the PDF (no-print).
-export function sheetHeader({ switcher = null, tools = [] }) {
+// The header above both sheets (it does not move when switching): the title, with the instruction set selector inside
+// it, and the Encoder / Decoder pill on the left, the tools (PDF, Clear, Share) on the right; credits, the license and
+// the contribution link below. Tools and the contribution link are left out of the PDF (no-print).
+export function sheetHeader({ isaPicker = null, switcher = null, tools = [] }) {
   return _div({ class: 'sheet-header' }, [
     _div({ class: 'header-main' }, [
-      _span({ class: 'header-title' }, 'Sliderule RV32GC Cheatsheet'),
+      _span({ class: 'header-title' }, ['Sliderule', isaPicker, 'Cheatsheet']),
       switcher,
       _div({ class: 'header-tools no-print' }, tools),
     ]),

@@ -1,4 +1,5 @@
 import { formats } from './isa/rv32gc.mjs';
+import { isas } from './isa/isas.mjs';
 import { decodeWord, encodeEntry, unusedOpcode, encodable, assemblyParts, fieldMask, partialDecode } from './isa/codec.mjs';
 import { decoderTable, decoderRows, readConstraints, writeBits, selectedWord, dimUpperHalf, pasteBits, highlightBits } from './selector.mjs';
 import { encoderTable, encoderRows, showEncodedBits, highlightEncodedBits, expandedColumns, setExpandedColumns } from './encoder.mjs';
@@ -16,8 +17,9 @@ const SLIDE_EASING = 'cubic-bezier(0.65, 0, 0.35, 1)';
 const RESIZE_MS = 220;
 const COPIED_MS = 1200;
 const EXTENSION_ORDER = ['I', 'M', 'A', 'F', 'D', 'Zicsr', 'Zifencei', 'C', 'C + F', 'C + D', 'PSEUDO'];
-const URL_KEYS = ['ext', 'type', 'm', 'open', 'bits'];
-const state = { mode: 'encoder', ext: '*', type: '*', entry: null, encoded: null, operands: null, decoded: null, word: null, switching: false };
+const URL_KEYS = ['isa', 'ext', 'type', 'm', 'open', 'bits'];
+const COMING_SOON = '<Coming soon>';
+const state = { isa: isas[0], mode: 'encoder', ext: '*', type: '*', entry: null, encoded: null, operands: null, decoded: null, word: null, switching: false };
 let _elements = null;
 
 // ---------------------------------------------------------------- assembly with coloured operands
@@ -91,6 +93,7 @@ function _copyButton({ label = 'Copy', title = '', classes = 'tool-button', text
 
 function _stateParams() {
   const params = new URLSearchParams();
+  if (state.isa !== isas[0]) params.set('isa', state.isa.value);
   if (state.ext !== '*') params.set('ext', state.ext);
   if (state.type !== '*') params.set('type', state.type);
   if (state.entry) {
@@ -163,6 +166,7 @@ function _clear() {
 }
 
 function _nothingToClear() {
+  if (!state.isa.ready) return true;
   if (state.mode === 'decoder') return readConstraints().every((c) => c === '-');
   return state.ext === '*' && state.type === '*' && !state.entry;
 }
@@ -437,11 +441,13 @@ function _selectPill({ mode = 'encoder' }) {
 }
 
 // The header ends where the window or the shown sheet ends, whichever comes first (its tools align there), and stays
-// in view when the sheets scroll sideways. Its width glides along when switching (see .sheet-header).
-function _fitHeader({ app = null, header = null }) {
+// in view when the sheets scroll sideways. Its width glides along when switching (see .sheet-header). A placeholder
+// takes the same width.
+function _fitHeader({ app = null, header = null, placeholder = null }) {
   const fit = () => {
     const left = app.getBoundingClientRect().left + window.scrollX;
     header.style.width = `${Math.min(document.documentElement.clientWidth - 2 * left, _currentTable().offsetWidth)}px`;
+    placeholder.style.width = header.style.width;
   };
   window.addEventListener('resize', fit);
   fit();
@@ -461,6 +467,29 @@ function _stickHeaderRows({ table = null }) {
   };
   new ResizeObserver(place).observe(table.tHead);
   place();
+}
+
+// ---------------------------------------------------------------- instruction set
+
+function _isaPicker() {
+  const picker = Carousel({ label: 'instruction set', classes: 'title-carousel', value: state.isa.value,
+    options: isas.map((isa) => ({ ...isa, hint: isa.ready ? '' : 'Coming soon' })),
+    onChange: (value) => _selectIsa({ isa: isas.find((isa) => isa.value === value) }) });
+  picker.querySelectorAll('.carousel-step').forEach((step) => step.classList.add('no-print'));
+  return picker;
+}
+
+// An instruction set without sheets shows a placeholder instead; the sheets stay laid out (the header's width follows
+// them) and keep their state for coming back.
+function _selectIsa({ isa = isas[0] }) {
+  state.isa = isa;
+  _elements.isa.setValue(isa.value);
+  _elements.stage.classList.toggle('no-sheet', !isa.ready);
+  _elements.placeholder.hidden = isa.ready;
+  _elements.placeholder.replaceChildren(_div({ class: 'placeholder-title' }, isa.label), _div({ class: 'placeholder-bits' }, COMING_SOON));
+  for (const segment of _elements.pill.children) segment.disabled = !isa.ready;
+  _elements.pdf.disabled = !isa.ready;
+  refresh();
 }
 
 // ---------------------------------------------------------------- app
@@ -517,10 +546,13 @@ export function Sliderule() {
 
   const pill = _modePill();
   const clear = _button({ label: 'Clear', classes: 'tool-button header-tool', title: 'Back to the whole sheet', onClick: _clear });
-  const header = sheetHeader({ switcher: pill, tools: [clear, _pdfButton(), _shareButton()] });
+  const pdf = _pdfButton();
+  const isa = _isaPicker();
+  const header = sheetHeader({ isaPicker: isa, switcher: pill, tools: [clear, pdf, _shareButton()] });
   const stage = _div({ id: 'sliderule', class: 'stage' }, [_div({ class: 'view' }, [decoder]), _div({ class: 'view' }, [encoder])]);
-  const app = _div({ class: 'sliderules-app' }, [header, stage]);
-  _elements = { fitHeader: () => {}, header, pill, clear, decoder, encoder, decoderResult, decoderCopy, decoderWordCopies, encoderLabels, encoderCopies, selectors, operands: selectors.operands, stage };
+  const placeholder = _div({ class: 'sheet-placeholder' }, '');
+  const app = _div({ class: 'sliderules-app' }, [header, placeholder, stage]);
+  _elements = { fitHeader: () => {}, header, placeholder, isa, pill, clear, pdf, decoder, encoder, decoderResult, decoderCopy, decoderWordCopies, encoderLabels, encoderCopies, selectors, operands: selectors.operands, stage };
   const { mode, params } = _readUrl();
   state.mode = mode;
   _selectPill({ mode });
@@ -529,10 +561,10 @@ export function Sliderule() {
   // Each table only re-renders while shown: fill the hidden one once so it is ready for the switch.
   if (mode === 'encoder') _renderDecoder();
   else _renderEncoder();
-  refresh();
+  _selectIsa({ isa: isas.find((isa) => isa.value === params.get('isa')) });
   requestAnimationFrame(() => {
     [decoder, encoder].forEach((table) => _stickHeaderRows({ table }));
-    _elements.fitHeader = _fitHeader({ app, header });
+    _elements.fitHeader = _fitHeader({ app, header, placeholder });
   });
   return app;
 }
